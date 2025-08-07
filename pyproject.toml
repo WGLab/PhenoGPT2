@@ -1,0 +1,34 @@
+[project]
+name = "phenogpt2"
+version = "0.1.0"
+description = "A phenotype-aware language modeling toolkit"
+authors = [
+  { name = "Quan Minh Nguyen", email = "quannguyenminh103@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+  "transformers",
+  "datasets",
+  "peft",
+  "fastobo",
+  "sentencepiece",
+  "einops",
+  "protobuf",
+  "evaluate",
+  "scipy",
+  "accelerate",
+  "deepspeed",
+  "bitsandbytes",
+  "spacy",
+  "medspacy",
+  "xformers",
+  "sentence_transformers"
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# Explicitly state this is a package-less project
+packages = []

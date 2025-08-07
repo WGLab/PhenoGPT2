@@ -1,3 +1,27 @@
-model/*
-__pycache__
-slurm-*
+# 1. Ignore files starting with "slurm"
+slurm*
+
+# 2. Keep subfolders in ./models/ but ignore their contents
+/models/bert_filtering/*
+!/models/bert_filtering/.gitkeep
+
+/models/hpo_aware_pretrain/*
+!/models/hpo_aware_pretrain/.gitkeep
+
+/models/phenogpt2/*
+!/models/phenogpt2/.gitkeep
+
+/models/llama-vision-phenogpt2/*
+!/models/llama-vision-phenogpt2/.gitkeep
+
+# 3. Ignore .ipynb_checkpoints and __pycache__ folders anywhere
+**/.ipynb_checkpoints/
+**/__pycache__/
+
+# 4. Ignore embedding_cache
+embedding_cache
+
+# 5. LLaVA model
+LLaVA
+
+phenogpt2.egg-info

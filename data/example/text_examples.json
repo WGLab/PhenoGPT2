@@ -1,0 +1,138 @@
+[
+  {
+    "clinical_note": "The patient is a 22-year-old male presenting with a complex array of clinical features primarily impacting his cardiovascular, musculoskeletal, and developmental systems. He has a known history of patent ductus arteriosus and pulmonic stenosis, which have likely contributed to his reduced cardiovascular efficiency and may require ongoing monitoring for potential complications or interventions. \n\nDistinct craniofacial dysmorphisms are apparent, including mandibular prognathia and a short philtrum. The patient exhibits narrow palpebral fissures, which, together with his mandibular prognathism, contribute to the unique facial profile. The structural anomalies extend intracranially with a noted thickened calvaria.\n\nSkeletal issues are pronounced, highlighted by short long bones, platyspondyly, and enlarged vertebral pedicles. Further complicating his orthopedic picture is the presence of cone-shaped epiphyses, contributing to the distinctive morphologic findings of his hands and feet, such as short palms and feet. The patient's musculoskeletal profile is marked by generalized muscle hypertrophy, potentially affecting his range of motion and physical endurance, as well as a limitation of joint mobility that could impact daily activities.\n\nDevelopmentally, the patient exhibits global developmental delay, an aspect requiring ongoing support to optimize functional capabilities and quality of life. Compounding communication and learning challenges is the presence of hearing impairment. Additionally, the patient has velopharyngeal insufficiency, which may affect speech resonance and feeding, requiring interdisciplinary management.\n\nNotably, despite these pervasive health challenges, certain features commonly associated with similar phenotypic profiles, such as strabismus, short stature, clinodactyly of the 5th finger, and psychotic features, are absent in this case, potentially simplifying some aspects of management.\n\nOverall, this presentation underscores a multisystemic involvement with significant needs for a multidisciplinary care team. Careful coordination between cardiology, orthopedics, developmental pediatrics, audiology, and speech therapy, along with continual assessment of functional and developmental progress, will be essential in managing the array of symptoms and maximizing the patient\u2019s potential benefits from therapeutic interventions.",
+    "image": null,
+    "phenotypes": {
+      "patent ductus arteriosus": "HP:0001643",
+      "pulmonic stenosis": "HP:0001642",
+      "mandibular prognathia": "HP:0000303",
+      "narrow palpebral fissure": "HP:0045025",
+      "short philtrum": "HP:0000322",
+      "thickened calvaria": "HP:0002684",
+      "short long bone": "HP:0003026",
+      "platyspondyly": "HP:0000926",
+      "enlarged vertebral pedicles": "HP:0004621",
+      "cone-shaped epiphysis": "HP:0010579",
+      "generalized muscle hypertrophy": "HP:0003720",
+      "limitation of joint mobility": "HP:0001376",
+      "short palm": "HP:0004279",
+      "short foot": "HP:0001773",
+      "global developmental delay": "HP:0001263",
+      "hearing impairment": "HP:0000365",
+      "velopharyngeal insufficiency": "HP:0000220"
+    },
+    "pid": "PMID_22158539_individual_8"
+  },
+  {
+    "clinical_note": "The patient, a 2-year-6-month-old female, was initially evaluated at 6 months of age due to a constellation of concerning symptoms, including episodes of apnea and cyanosis. At this early age, she also presented with respiratory distress, suggestive of underlying respiratory insufficiency. Her growth has been suboptimal, as evidenced by failure to thrive starting in infancy.\n\nAntenatal and birth history is notable for premature birth, which might have contributed to some of her early respiratory challenges. In addition to her respiratory concerns, there have been signs pointing to cardiac strain. Notably, she exhibits signs of right ventricular hypertrophy and was subsequently found to have pulmonary arterial hypertension. These features are concerning for increased pulmonary vascular resistance and potential chronic pressure overload on the right side of the heart.\n\nDespite these significant findings, she has not exhibited symptoms related to atrial flutter, atrioventricular blocks, right ventricular failure, or hypertrophic cardiomyopathy, and there was no evidence of increased NT-proBNP levels, suggesting that these aspects may not currently be contributing to her clinical picture.\n\nThe evaluation also included imaging and further diagnostic testing, which ruled out ground-glass opacifications in the lungs. Given the presence of pulmonary capillary hemangiomatosis, it is likely contributing to the severity of her pulmonary and systemic symptoms.\n\nThe molecular diagnosis has identified a causative variant, which provides a genetic basis for the observed pulmonary hypertension. The comprehensive picture aligns with known features linked to this diagnosis, emphasizing the importance of monitoring and interventions tailored to manage her pulmonary and cardiovascular status to mitigate further complications as she grows. Careful follow-up and possibly targeted therapeutic strategies will be essential to improve her quality of life and clinical outcomes.",
+    "image": null,
+    "phenotypes": {
+      "pulmonary capillary hemangiomatosis": "HP:0005954",
+      "apnea": "HP:0002104",
+      "cyanosis": "HP:0000961",
+      "right ventricular hypertrophy": "HP:0001667",
+      "pulmonary arterial hypertension": "HP:0002092",
+      "dyspnea": "HP:0002094",
+      "premature birth": "HP:0001622",
+      "respiratory insufficiency": "HP:0002093",
+      "failure to thrive": "HP:0001508"
+    },
+    "pid": "PMID_38230350_Proband_P3_family_A_II_3"
+  },
+  {
+    "clinical_note": "The patient is a 23-year-old male who presents with significant ophthalmologic findings. He is noted to have high hypermetropia, a refractive error where distant objects can be seen more clearly than near ones, which suggests that he has a considerable degree of farsightedness requiring corrective lenses. Additionally, there is a diagnosis of optic disc hypoplasia, an underdevelopment of the optic nerve head, which can lead to decreased vision or visual field defects. Importantly, the patient does not exhibit any signs of nystagmus, strabismus, photophobia, reduced visual acuity, high myopia, or colobomatous changes such as iris or retinal coloboma, nor did he have foveal hypoplasia, indicating a sparing of central visual clarity.\n\nThese ocular characteristics have been present since birth, consistent with a congenital onset. Despite the absence of many other potential ocular concerns, the combination of observed features suggests a complex developmental anomaly affecting the eyes, predominantly centered on the optic nerve development and refractive properties.\n\nA diagnosis was established to be linked to a molecular finding, which indicates a causative nature, further elucidated by a specific variant observed in a gene related to these ocular phenotypes. The primary clinical concerns revolve around managing the refractive errors and monitoring any potential progression of symptoms to ensure optimal visual outcomes for the patient. Ongoing ophthalmologic assessments are likely necessary to adjust corrective strategies and to monitor for any late-emerging ocular complications.",
+    "image": null,
+    "phenotypes": {
+      "high hypermetropia": "HP:0008499",
+      "optic disc hypoplasia": "HP:0007766"
+    },
+    "pid": "PMID_33633439_12467_I_1"
+  },
+  {
+    "clinical_note": "The patient is a 55-year-old female who presents with a history of clinical features suggestive of a connective tissue disorder predominantly affecting the vascular system. She reports frequent arterial ruptures, which are of significant concern given the potential for life-threatening complications. Alongside this, she experiences marked bruising susceptibility, which occurs with minimal or sometimes no apparent trauma, indicating an underlying fragility of the blood vessels and connective tissues.\n\nClinically, she also describes issues with her gums, noting they are unnaturally fragile. This gingival fragility leads to dental challenges and increased bleeding during oral hygiene activities, such as brushing or flossing. Furthermore, she demonstrates hypermobility of the finger joints, a feature characteristic of increased connective tissue laxity, though she has not reported any chronic pain or dislocations due to this.\n\nUpon examination, the skin appears unusually translucent. This dermal translucency provides a visible window into the underlying vasculature, which may serve as a visible manifestation of reduced dermal collagen strength. Despite these concerning symptoms, it is noted that she has not experienced any aortic dissection, aortic rupture, or arterial dissection. Additionally, she has not suffered from spontaneous pneumothorax, nor has she a history of talipes equinovarus or congenital hip dislocation, and tendon ruptures have also not been reported.\n\nThe diagnostic evaluation, including a comprehensive genetic screening, has confirmed the suspicion of a connective tissue disorder, aligning with vascular type characteristics. This diagnosis helps elucidate the constellation of symptoms and provides a framework for managing the patient's vascular and connective tissue health moving forward. Given the potential risks associated with arterial ruptures and other vascular events, ongoing surveillance and a multidisciplinary management approach are imperative for her care.",
+    "image": null,
+    "phenotypes": {
+      "arterial rupture": "HP:0025019",
+      "bruising susceptibility": "HP:0000978",
+      "gingival fragility": "HP:0034518",
+      "finger joint hypermobility": "HP:0006094",
+      "dermal translucency": "HP:0010648"
+    },
+    "pid": "PMID_36189931_Individual_19"
+  },
+  {
+    "clinical_note": "The patient is a 43-year-old female with a longstanding history of visual disturbances that began in her childhood. She initially presented with symptoms of nyctalopia, or night blindness, which has been progressive over the years. This difficulty in seeing in low light conditions was one of her earliest symptoms and prompted further evaluation.\n\nHer visual acuity has also progressively diminished. She reports difficulty with tasks that require fine detail, and her visual acuity is notably reduced, impacting her daily activities such as reading and recognizing faces, which she finds particularly challenging.\n\nUpon ophthalmological examination, there is evident bone spicule pigmentation of the retina. This classic clinical finding is associated with retinitis pigmentosa, characterized by the presence of black, spicule-shaped pigment deposits in the peripheral retina. This, along with a significant visual field defect, contributes to her peripheral vision loss, causing her to frequently bump into objects and experience a \"tunnel vision\" effect.\n\nThese clinical manifestations align with a diagnosis of retinitis pigmentosa, specifically identified as a subtype related to a genetic mutation that has been confirmed to be causative upon genetic testing. The patient's genetic analysis revealed a heterozygous pathogenic variant in a gene associated with this retinopathy, which corroborates the clinical picture and provides a definitive diagnosis. The onset of symptoms in childhood is typical for this condition, leading to her current progressive visual impairment.\n\nThe diagnosis has been classified as solved, offering a clear clinical and genetic explanation for her symptoms. While there are no curative treatments for her condition at this time, management focuses on monitoring her visual function, protecting her remaining vision, and providing supportive measures to assist in her daily life.",
+    "image": null,
+    "phenotypes": {
+      "nyctalopia": "HP:0000662",
+      "reduced visual acuity": "HP:0007663",
+      "bone spicule pigmentation of the retina": "HP:0007737",
+      "visual field defect": "HP:0001123"
+    },
+    "pid": "PMID_28106895_proband_II_2"
+  },
+  {
+    "clinical_note": "This clinical note pertains to a female patient who presents with specific phenotypic features suggestive of an underlying congenital condition. Clinically, the patient exhibits a short thumb, a notable limb malformation concerning her upper extremity's digit formation. There is an associated cardiac conduction anomaly characterized by atrioventricular dissociation, which indicates a disconnection between the atrial and ventricular rhythms, potentially resulting in hemodynamic compromise and warranting cardiology oversight.\n\nIt is noteworthy that while she does show the atrioventricular conduction disorder, a range of other cardiac structural anomalies has been explicitly ruled out upon clinical evaluation. These excluded features include a secundum atrial septal defect, various forms of ventricular septal defects including both muscular and perimembranous types, a complete atrioventricular canal defect, a patent foramen ovale, a common atrium, and an unroofed coronary sinus. Moreover, additional skeletal features often associated with this spectrum of anomalies, such as absent thumb, triphalangeal thumb, or more severe upper limb reductions such as phocomelia and amelia, have also been excluded.\n\nGenetic analysis has revealed alterations consistent with a known syndrome that involves both limb and cardiac malformations. This supports a diagnosis that aligns with the clinical presentation of short thumb and atrioventricular dissociation. Genetic counseling and further family history evaluation may be prudent to assess the hereditary implications, given the genetic underpinning of this condition.\n\nThe absence of the above-excluded cardiac and skeletal features refines the differential diagnosis and aligns with a more specific phenotypic presentation, thereby guiding targeted management and surveillance for potential associated complications. Regular follow-up with cardiology and orthopedics would be advised to monitor and manage any evolving symptoms or functional impairments.",
+    "image": null,
+    "phenotypes": {
+      "short thumb": "HP:0009778",
+      "atrioventricular dissociation": "HP:0011709"
+    },
+    "pid": "PMID_16917909_667_1"
+  },
+  {
+    "clinical_note": "The patient is a 34-year-old male who initially presented with notable skeletal abnormalities in infancy, specifically noted at around seven months of age. His primary orthopaedic concern has been progressive kyphoscoliosis, which became evident early in his development. Over time, he has exhibited a constellation of skeletal anomalies that have posed challenges in both diagnosis and management.\n\nImaging and clinical assessment have identified a hypoplastic iliac body, indicating underdevelopment of the pelvis, which could contribute to stability issues and affect his gait. In addition, he displays flaring of the metaphyses, suggesting widened and irregular bone ends that are typically found at the region of bone growth. This is accompanied by hyperplasia of the femoral trochanters, denoting an overdevelopment in the hip region, which can contribute to alterations in hip mechanics.\n\nClinically, the patient has limited elbow movement, potentially impacting daily activities that require upper limb flexibility. His vertebrae present with platyspondyly, where the vertebral bodies are flattened, and beaking, a characteristic contour that could potentially compromise spinal alignment and mobility.\n\nNotably, some features commonly associated with similar phenotypic presentations are absent in this patient. There is no evidence of dysplasia of the femoral head, avoiding potential implications for hip joint stability and function. There are also no signs of talipes equinovarus, hip dislocation, or spatulate deformities of the thumbs, and the ossification patterns in the hands are typical with no advanced changes. Furthermore, there is no joint contracture in the hands and no hypotonia, suggesting relatively preserved muscle tone and function, which would be atypical in more generalized connective tissue disorders.\n\nThis case has been comprehensively interpreted as a genetic disorder with a specific diagnosis identified, involving a condition affecting skeletal development and joint laxity. The patient's genetic investigation revealed causative alterations, confirming the underlying genetic etiology responsible for his phenotype. Given the absence of certain features, his presentation appears somewhat atypical, but consistent with the broader spectrum of the recognized condition. This elucidation has not only enhanced understanding of his clinical presentation but also aids in guiding further management and therapeutic decisions. Such a diagnosis emphasizes the importance of detailed phenotypic documentation and genetic evaluation in similar complex clinical scenarios.",
+    "image": null,
+    "phenotypes": {
+      "kyphoscoliosis": "HP:0002751",
+      "hypoplastic iliac body": "HP:0008824",
+      "flared metaphysis": "HP:0003015",
+      "hyperplasia of the femoral trochanters": "HP:0002822",
+      "limited elbow movement": "HP:0002996",
+      "platyspondyly": "HP:0000926",
+      "beaking of vertebral bodies": "HP:0004568"
+    },
+    "pid": "PMID_23664117_family_F1_subject_P1"
+  },
+  {
+    "clinical_note": "The patient, a 5-year-old female, first presented with symptoms at the age of 11 months. The initial findings were notably dermatological, with the child experiencing recurrent episodes of urticaria. This was coupled with concerning hematological findings of leukocytosis, suggestive of a systemic inflammatory process. Concurrently, laboratory tests indicated elevated circulating C-reactive protein (CRP) levels and increased erythrocyte sedimentation rate (ESR), consistent with ongoing inflammation. Histopathological examination revealed a deep dermal perivascular inflammatory infiltrate, further supporting the suspicion of a systemic inflammatory disorder.\n\nThe clinical course of the condition evolved as the patient grew older, with more complex neurological symptoms manifesting by the age of 3 years. The child began to complain of severe headaches, and further evaluation revealed signs of increased intracranial pressure. Ophthalmological examination confirmed the presence of papilledema, an alarming indication of raised pressure within the skull.\n\nImportantly, the differential diagnosis was narrowed by the absence of certain other symptoms. Notably, vasculitis and conjunctivitis were specifically excluded, directing the diagnostic considerations away from conditions typically associated with these features.\n\nOver time, the patient's symptomatology and thorough clinical work-up led to a specific diagnosis. Genetic analysis identified a causative mutation consistent with the clinical presentation, further clarifying the underlying pathophysiology affecting this young patient.\n\nThe case was successfully resolved with a diagnosis fitting these clinical findings, providing a comprehensive understanding of the underlying genetic and clinical mechanisms at play. The management of the patient's condition would involve addressing the chronic inflammatory nature of the syndrome, potentially with anti-inflammatory and immunomodulatory therapies to alleviate the recurring symptoms and prevent long-term complications.",
+    "image": null,
+    "phenotypes": {
+      "urticaria": "HP:0001025",
+      "leukocytosis": "HP:0001974",
+      "elevated circulating c-reactive protein concentration": "HP:0011227",
+      "elevated erythrocyte sedimentation rate": "HP:0003565",
+      "deep dermal perivascular inflammatory infiltrate": "HP:0031191",
+      "headache": "HP:0002315",
+      "increased intracranial pressure": "HP:0002516",
+      "papilledema": "HP:0001085"
+    },
+    "pid": "PMID_27435956_case_report"
+  },
+  {
+    "clinical_note": "The patient is a 57-year-old female who has been experiencing visual impairment, which has significantly affected her daily activities. She was first noted to have symptoms of macular dystrophy around the age of 49. This condition has progressed to cause reduced visual acuity, impacting her ability to perform tasks that require fine visual discrimination. Notably, she does not exhibit macular atrophy or retinal pigment epithelial atrophy, which are conditions sometimes associated with macular dystrophies.\n\nOn examination, the patient does not exhibit temporal optic disc pallor or hypoautofluorescent retinal lesions, which might have suggested more extensive damage to the retinal structures or optic nerve. Similarly, she does not report central scotomas, which would indicate a specific loss of vision in the central field, a common feature in similar retinal disorders.\n\nThe clinical picture, predominantly characterized by reduced visual acuity and macular dystrophy without additional features like cone dysfunction, guides the underlying diagnostic considerations. This condition has been genetically confirmed, with a diagnosis associated with a known genetic mutation. The condition is understood to be primarily linked to changes affecting the macular region, impacting the patient's central vision over time.\n\nThe patient's case has been resolved by confirming the diagnosis through genetic testing, identifying a homozygous mutation involved, pointing to an underlying genetic cause of her symptoms. The management focus for the patient is likely directed towards optimizing visual function and providing supportive care to manage daily challenges related to her vision loss. Follow-up would likely involve regular ophthalmological assessments to monitor the progression of her symptoms and adjust care strategies as needed to maintain her quality of life.",
+    "image": null,
+    "phenotypes": {
+      "reduced visual acuity": "HP:0007663",
+      "macular dystrophy": "HP:0007754"
+    },
+    "pid": "PMID_38272031_Individual_3_1"
+  },
+  {
+    "clinical_note": "This 7-year-old male patient presented with a constellation of clinical findings that have been closely monitored since infancy. Notably, the onset of seizures was documented at 9 months of age. These seizure episodes have been a prominent feature in his clinical history and continue to warrant careful management and monitoring.\n\nIn terms of his developmental milestones, there has been a persistent global developmental delay, which has impacted multiple areas of his growth and learning. Alongside these developmental challenges, he has exhibited hypotonia, a reduced muscle tone that has contributed to his delayed motor achievements and has likely affected his overall physical coordination.\n\nCerebral visual impairment has also been observed, indicating that his visual processing issues are related to neurological rather than ocular causes. This has likely compounded the challenges involved in his developmental trajectory.\n\nAdditionally, the patient has a distinctive dental phenotype characterized by widely spaced teeth, which may be contributing to both aesthetic and functional oral health concerns.\n\nFrom a dermatological perspective, the patient has been diagnosed with ichthyosis, presenting as dry, scaly skin. This condition requires regular dermatological care to maintain skin hydration and barrier function.\n\nEndocrine and metabolic evaluations have revealed significant abnormalities in his iron metabolism. He has increased circulating iron concentration and elevated transferrin saturation, with a decreased circulating hepcidin concentration. These findings suggest dysregulation in iron homeostasis, necessitating ongoing surveillance to prevent complications from iron overload.\n\nCryptorchidism, or undescended testes, has been noted during physical examinations, and this is a concern with potential implications for hormonal function and future fertility.\n\nImportantly, the absence of spasticity, hepatic complications such as cirrhosis or hepatomegaly, and other neurological features like ataxia and cerebral atrophy helps focus the differential diagnosis and management plan on the present symptoms without these confounding elements.\n\nGiven this clinical picture, the findings are consistent with a complex neurodevelopmental disorder that includes epilepsy and features of hemochromatosis. The absence of certain expected features, such as status epilepticus and cirrhosis, along with the presence of unique metabolic and neurologic signs, guides the clinical management and genetic counseling of this patient and his family. Regular follow-up with a multidisciplinary team, including pediatric neurology, genetics, endocrinology, and developmental pediatrics, is crucial to address his comprehensive and evolving health care needs.",
+    "image": null,
+    "phenotypes": {
+      "seizure": "HP:0001250",
+      "widely spaced teeth": "HP:0000687",
+      "hypotonia": "HP:0001252",
+      "ichthyosis": "HP:0008064",
+      "cerebral visual impairment": "HP:0100704",
+      "decreased circulating hepcidin concentration": "HP:0031876",
+      "elevated transferrin saturation": "HP:0012463",
+      "increased circulating iron concentration": "HP:0003452",
+      "global developmental delay": "HP:0001263",
+      "cryptorchidism": "HP:0000028"
+    },
+    "pid": "PMID_34875027_Patient_2"
+  }
+]
