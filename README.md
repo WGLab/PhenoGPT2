@@ -53,16 +53,15 @@ pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.
 - Then, you can just download either PhenoGPT2-Short or PhenoGPT2-EHR (full parameters) for the inference.
 - If you plan to extract phenotypes from images, also download PhenoGPT2-Vision.
 - **ATTENTION**: PhenoGPT2 is in testing. To access the model weights, please contact us.
-    
+- LLaVA-Med delivers the best performance, but its installation requires manual modifications to the original code, which can be complex. Please contact us if you wish to use the LLaVA-Med version. Otherwise, the fine-tuned LLaMA 3.2 11B Vision-Instruct offers seamless integration.
 Model Descriptions | Module | Base Model | 🤗 Huggingface Hub | 
 | --- | --- | --- | ---: |
 | HPO Aware Pretrain | Text | LLaMA 3.1 8B | [Not release yet]() |
 | PhenoGPT2-Short | Text | LLaMA 3.1 8B | [Not release yet]() |
 | PhenoGPT2-EHR (main) | Text | LLaMA 3.1 8B | [Not release yet]() |
-| PhenoGPT2-Vision | Vision | LLaVA-Med/Mistral | [Not release yet]() |
+| PhenoGPT2-Vision | Vision | LLaVA-Med/LLaMA | [Not release yet]() |
 | PhenoGPT2-Vision (default) | Vision | LLaMA 3.2 11B Vision-Instruct | [Not release yet]() |
 - If you plan to fine-tune or pretrain the models from scratch, make sure to download the original base model weights from [Meta](https://www.llama.com/llama-downloads/) and [LLava-Med](https://github.com/microsoft/LLaVA-Med) repos.
-- We recommend using fine-tuned LLaMA 3.2 11B version as the codes run much easier while LLaVA requires additional installation on separate conda environments (LLaVA uses old Transformers package which has not been updated, leading to package incompabitlity).
 - Save all models in the ./models
 ## Data Input Guide
 - Input files (for inference) should be a dictionary (key: patient id, value: patient meta data) or a list of dictionary. It should either in JSON or PICKLE extension. Each patient dictionary should have the following format:
@@ -125,7 +124,6 @@ bash run_inference.sh -i ./data/example/text_examples.json \
          -o example_testing \
          -model_dir ./models/phenogpt2/ \
          -index 0 
-         -lora 
          -negation 
          -wc 0"
 ```
@@ -138,9 +136,9 @@ bash run_inference.sh -i ./data/example/text_examples.json \
 | Argument                    | Description                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `-model_dir`, `--model_dir` | Path to the base model directory (e.g. a pretrained LLaVA or LLaMA3 model). If not provided, defaults will be used. |
-| `-lora`, `--lora`           | Enable this flag to use a **LoRA-adapted model**.                                                                   |
+| `-lora`, `--lora`           | Enable this flag if your model is **LoRA-adapted**.                                                                   |
 | `-index`, `--index`         | Identifier string for saving outputs. Useful for tracking multiple runs.                                            |
-| `-negation`, `--negation`   | By default, **negation filtering is disabled**. Use this flag to **enable** it.                                     |
+| `-negation`, `--negation`   | By default, **negation filtering is enabled**. Use this flag to **disable** it.                                     |
 | `--text_only`               | Use only the **text module** of the model, ignoring visual inputs.                                                  |
 | `--vision_only`             | Use only the **vision module**, ignoring text inputs.                                                               |
 | `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` (default) or `llama-vision`.                                          |
