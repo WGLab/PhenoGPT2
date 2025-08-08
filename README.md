@@ -140,7 +140,7 @@ bash run_inference.sh -i ./data/example/text_examples.json \
 | `-model_dir`, `--model_dir` | Path to the base model directory (e.g. a pretrained LLaVA or LLaMA3 model). If not provided, defaults will be used. |
 | `-lora`, `--lora`           | Enable this flag to use a **LoRA-adapted model**.                                                                   |
 | `-index`, `--index`         | Identifier string for saving outputs. Useful for tracking multiple runs.                                            |
-| `-negation`, `--negation`   | By default, **negation filtering is enabled**. Use this flag to **disable** it.                                     |
+| `-negation`, `--negation`   | By default, **negation filtering is disabled**. Use this flag to **enable** it.                                     |
 | `--text_only`               | Use only the **text module** of the model, ignoring visual inputs.                                                  |
 | `--vision_only`             | Use only the **vision module**, ignoring text inputs.                                                               |
 | `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` (default) or `llama-vision`.                                          |
@@ -161,7 +161,7 @@ Quan Minh Nguyen - Bioengineering PhD student at the University of Pennsylvania
 Dr. Kai Wang - Professor of Pathology and Laboratory Medicine at the University of Pennsylvania and Children's Hospital of Philadelphia
 
 ## Citations
-The publication is preparing! We appreciate your reading!
+The publication is preparing! We appreciate your reading! In the meantime, you can cite our Github if used.
 
 > @misc{nguyen2025phenogpt2,
   author       = {Quan Minh Nguyen and Kai Wang},

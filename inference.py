@@ -25,7 +25,7 @@ def main():
     parser.add_argument("-model_dir", "--model_dir", help="Model directory path")
     parser.add_argument("-lora", "--lora", action="store_true", help="Use LoRA model")
     parser.add_argument("-index", "--index", help="Index identifier for saving")
-    parser.add_argument("-negation", "--negation", action="store_false", help="Disable negation filtering")
+    parser.add_argument("-negation", "--negation", action="store_true", help="Allow negation filtering")
     parser.add_argument("--text_only", action="store_true", help="Force using only text module")
     parser.add_argument("--vision_only", action="store_true", help="Force using only vision module")
     parser.add_argument("-vision", "--vision", default="llama-vision", help="Vision model choice (llava-med or llama-vision)")
@@ -135,7 +135,7 @@ def main():
                     example_removed = ['cleft palate', 'seizures', 'dev delay'] ## here are phenotypes in one-shot in alternative prompt
                     temp_phenotypes = {k:v for k,v in final_response['phenotypes'].items() if (k not in example_removed) or (k in chunk)}
                     final_response['phenotypes'] = temp_phenotypes
-                    if not negation:
+                    if negation:
                         phenotypes = list(final_response['phenotypes'].keys())
                         phenotypes = [p.lower() for p in phenotypes]
                         positive_phenotypes = remove_negation(model, tokenizer, chunk, phenotypes, device = device)
