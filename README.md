@@ -54,6 +54,7 @@ pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.
 - If you plan to extract phenotypes from images, also download PhenoGPT2-Vision.
 - **ATTENTION**: PhenoGPT2 is in testing. To access the model weights, please contact us.
 - LLaVA-Med delivers the best performance, but its installation requires manual modifications to the original code, which can be complex. Please contact us if you wish to use the LLaVA-Med version. Otherwise, the fine-tuned LLaMA 3.2 11B Vision-Instruct offers seamless integration.
+
 Model Descriptions | Module | Base Model | 🤗 Huggingface Hub | 
 | --- | --- | --- | ---: |
 | HPO Aware Pretrain | Text | LLaMA 3.1 8B | [Not release yet]() |
@@ -138,11 +139,11 @@ bash run_inference.sh -i ./data/example/text_examples.json \
 | `-model_dir`, `--model_dir` | Path to the base model directory (e.g. a pretrained LLaVA or LLaMA3 model). If not provided, defaults will be used. |
 | `-lora`, `--lora`           | Enable this flag if your model is **LoRA-adapted**.                                                                   |
 | `-index`, `--index`         | Identifier string for saving outputs. Useful for tracking multiple runs.                                            |
-| `-negation`, `--negation`   | By default, **negation filtering is enabled**. Use this flag to **disable** it.                                     |
+| `-negation`, `--negation`   | By default, **negation filtering is disabled**. Use this flag to **enable** it.                                     |
 | `--text_only`               | Use only the **text module** of the model, ignoring visual inputs.                                                  |
 | `--vision_only`             | Use only the **vision module**, ignoring text inputs.                                                               |
 | `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` (default) or `llama-vision`.                                          |
-| `-wc`, `--wc`               | Word count per chunk. Use this to split long text into smaller chunks (default is `0`, meaning no splitting).       |
+| `-wc`, `--wc`               | Word count per chunk. Use this to split long text into smaller chunks (default is `0`, meaning no splitting). We recommend using either full length (no split) or 300/384 words per chunk (improving recall) depending on your tasks.      |
 
 
 ## Pretraining & Fine-tuning
