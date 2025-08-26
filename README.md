@@ -33,6 +33,7 @@ conda install -c conda-forge jupyter
 conda install intel-openmp blas mpi4py
 conda install -c anaconda ipykernel
 conda install pytorch::faiss-cpu
+conda install -c conda-forge libstdcxx-ng libgcc-ng
 python -m ipykernel install --user --name=phenogpt2
 ```
 3. Install PhenoGPT2 packages

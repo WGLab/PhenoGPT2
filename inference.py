@@ -14,7 +14,7 @@ from scripts.negation import *
 from scripts.prompting import *
 from scripts.utils import *
 from scripts.llama_vision_engine import *
-from scripts.llava_med_engine import *
+#from scripts.llava_med_engine import *
 device = "cuda" if torch.cuda.is_available() else "cpu"
 gc.collect()
 torch.cuda.empty_cache()

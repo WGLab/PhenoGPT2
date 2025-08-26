@@ -94,7 +94,7 @@ def generate_output(model, tokenizer, data_point, device, max_new_tokens = 10000
             input_ids,
             max_new_tokens=max_new_tokens,
             eos_token_id=terminators,
-            do_sample=True,
+            do_sample=True if temperature > 0 else False,
             temperature=temperature, #higher temperature => generate more creative answers but the responses may change
             top_p=0.8, #higher top_p => less likely to generate random answer not in the text
             bad_words_ids=bad_words_ids,
