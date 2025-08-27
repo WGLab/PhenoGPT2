@@ -143,7 +143,7 @@ bash run_inference.sh -i ./data/example/text_examples.json \
 | `-negation`, `--negation`   | By default, **negation filtering is disabled**. Use this flag to **enable** it.                                     |
 | `--text_only`               | Use only the **text module** of the model, ignoring visual inputs.                                                  |
 | `--vision_only`             | Use only the **vision module**, ignoring text inputs.                                                               |
-| `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` (default) or `llama-vision`.                                          |
+| `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` or `llama-vision` (default). It is used along with the text module; otherwise simply use --vision_only instead.                                          |
 | `-wc`, `--wc`               | Word count per chunk. Use this to split long text into smaller chunks (default is `0`, meaning no splitting). We recommend using either full length (no split) or 300/384 words per chunk (improving recall) depending on your tasks.      |
 
 

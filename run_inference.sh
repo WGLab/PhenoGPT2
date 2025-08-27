@@ -83,8 +83,8 @@ cmd="python inference.py -i \"$input\" -o \"$output\""
 [[ "$wc" -gt 0 ]] && cmd+=" -wc $wc"
 [[ "$lora" == true ]] && cmd+=" -lora"
 [[ "$negation_enabled" == false ]] && cmd+=" -negation"
-[[ "$text_only" == true ]] && cmd+=" -text_only"
-[[ "$vision_only" == true ]] && cmd+=" -vision_only"
+[[ "$text_only" == true ]] && cmd+=" --text_only"
+[[ "$vision_only" == true ]] && cmd+=" --vision_only"
 
 # Show and execute
 echo "Executing: $cmd"
@@ -94,8 +94,9 @@ eval $cmd
 # --cpus-per-gpu=3 --mem-per-cpu=50G \
 # --profile=all --time=5-00:00:00 --export=ALL \
 # --mail-type=ALL --mail-user= \
-# --wrap="bash run_inference.sh -i ./data/example/example.json \
-#         -o ./data/example_testing/ \
-#         -model_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_L318B_text_FPLoRA_new/model/ \
-#         -index 0 -lora -negation -wc 0"
+# --wrap="bash run_inference.sh -i ./data/example/vision_examples.json \
+#         -o vision_example \
+#         -model_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_EHR_L318B_text_FPFF/model/ \
+#         -vision /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_L323BVision_LORA_fp80_fc10_bc5_nc5_with_styles/ \
+#         -index 0 -negation -wc 0 -vision_only"
 

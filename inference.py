@@ -39,7 +39,16 @@ def main():
         model_id = os.getcwd() + '/models/phenogpt2'
     if args.lora:
         peft_config = PeftConfig.from_pretrained(model_id)
-        base_model_name = peft_config.base_model_name_or_path or "./models/hpo_aware_pretrain/"
+        # Get path to this file (inference.py)
+        current_file = os.path.abspath(__file__)
+
+        # Get path to phenogpt2 root (go up 2 levels: scripts/ -> phenogpt2/)
+        project_root = os.path.dirname(current_file)
+
+        # Get path to hpo_aware_pretrain
+        hpo_aware_pretrain_dir = os.path.join(project_root, "models", "hpo_aware_pretrain")
+
+        base_model_name = peft_config.base_model_name_or_path if os.path.isfile(peft_config.base_model_name_or_path) else hpo_aware_pretrain_dir
         model = AutoModelForCausalLM.from_pretrained(
             base_model_name,
             torch_dtype=torch.bfloat16,
