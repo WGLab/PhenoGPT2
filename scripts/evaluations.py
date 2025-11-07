@@ -27,6 +27,7 @@ emb_model = SentenceTransformer('BAAI/bge-en-icl', device=device)
 parser = argparse.ArgumentParser(description="PhenoGPT2 Phenotypic Term Detector",
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument("-model_dir", "--model_dir", required = True, help="directory to model folder")
+parser.add_argument("-result_dir", "--result_dir", required = False, help="directory to result folder")
 parser.add_argument("-name", "--name", required = True, help="Name of this dataset")
 parser.add_argument("-negation", "--negation", action="store_true", required = False, help="Negation results will be considered instead")
 args = parser.parse_args()
@@ -396,7 +397,7 @@ def process_true_ann(true_ann, sep = ' | '):
         return {t[0]:t[1] for t in true_ann_dict}
     else:
         return {}
-def print_results(result_metrics, divide_total = False):
+def print_results(result_metrics, empty_ids, divide_total = False):
     total_recall = 0
     total_precision = 0
     total_f1 = 0
@@ -419,6 +420,7 @@ def print_results(result_metrics, divide_total = False):
     print(f"Total number of samples: {len(result_metrics)}")
     print(f"Total number of Defined samples: {len(result_metrics) - len(empty_files)}")
     print(f"Undetermined Samples: {empty_files}")
+    print(f"No generation files: {len(empty_ids)}")
     print(f"% Recall: {total_recall/(len(result_metrics)-n)}")
     print(f"% Precision: {total_precision/(len(result_metrics)-n)}")
     print(f"% F1-Score: {total_f1/(len(result_metrics)-n)}")
@@ -493,14 +495,22 @@ def find_matching_file(directory, pattern="phenogpt2_rep\\d+"):
             return os.path.join(directory, f)
     return None
 
-def process_results(model_dir, dataset, true_ann, negation = False):
-    dir0 = find_matching_file(model_dir + f'{dataset}/', 'phenogpt2_rep0')
-    dir1 = find_matching_file(model_dir + f'{dataset}/', 'phenogpt2_rep1')
-    dir2 = find_matching_file(model_dir + f'{dataset}/', 'phenogpt2_rep2')
+def process_results(model_dir, dataset, true_ann, result_dir = None, negation = False):
+    if result_dir is None:
+        dir0 = find_matching_file(result_dir + f'evaluation/{dataset}/', 'phenogpt2_rep0')
+        dir1 = find_matching_file(result_dir + f'evaluation/{dataset}/', 'phenogpt2_rep1')
+        dir2 = find_matching_file(result_dir + f'evaluation/{dataset}/', 'phenogpt2_rep2')
+    else:
+        dir0 = find_matching_file(result_dir + f'/', 'phenogpt2_rep0')
+        dir1 = find_matching_file(result_dir + f'/', 'phenogpt2_rep1')
+        dir2 = find_matching_file(result_dir + f'/', 'phenogpt2_rep2')
     negation_phenotypes, negation_results, empty_ids = analyze_results(dir0, dir1, dir2, true_ann, negation)
     return negation_phenotypes, negation_results, empty_ids
-def save_data(model_dir, dataset, negation_phenotypes, negation_results, empty_ids, negation = False):
-    saved_dir = model_dir + f'evaluation/{dataset}/'
+def save_data(model_dir, dataset, negation_phenotypes, negation_results, empty_ids, negation = False, result_dir = None):
+    if result_dir is None:
+        saved_dir = model_dir + f'evaluation/{dataset}/'
+    else:
+        saved_dir = result_dir + "/"
     os.makedirs(saved_dir, exist_ok = True)
     if negation:
         postfix = '_negated'
@@ -561,20 +571,21 @@ def main():
         model_dir = args.model_dir
     else:
         model_dir = '/home/nguyenqm/projects/github_official/PhenoGPT2/data/results/'
-    negation_phenotypes, negation_results, negation_empty_ids = process_results(model_dir, name, input_data, negation = False)
-    save_data(model_dir, name, negation_phenotypes, negation_results, negation_empty_ids, negation = False)
+    result_dir = args.result_dir
+    phenotypes, results, empty_ids = process_results(model_dir=model_dir, result_dir=result_dir, dataset=name, true_ann=input_data, negation = False)
+    save_data(model_dir=model_dir, result_dir=result_dir, dataset=name, negation_phenotypes=phenotypes, negation_results=results, empty_ids=empty_ids, negation = False)
     print(f"Model: {model_dir}")
     print(f"Dataset: {name}")
     print(f"Negation: {False}")
-    print_results(negation_results)
+    print_results(results, empty_ids)
     if negation:
         print()
         print("Now processing for filtered_phenotypes (with negation):")
-        negation_phenotypes, negation_results, negation_empty_ids = process_results(model_dir, name, input_data, negation = True)
-        save_data(model_dir, name, negation_phenotypes, negation_results, negation_empty_ids, negation = True)
+        negation_phenotypes, negation_results, negation_empty_ids = process_results(model_dir=model_dir, result_dir=result_dir, dataset=name, true_ann=input_data, negation = True)
+        save_data(model_dir=model_dir, result_dir=result_dir, dataset=name, negation_phenotypes=negation_phenotypes, negation_results=negation_results, empty_ids=negation_empty_ids, negation = True)
         print(f"Model: {model_dir}")
         print(f"Dataset: {name}")
         print(f"Negation: {True}")
-        print_results(negation_results)
+        print_results(negation_results, negation_empty_ids)
 if __name__ == "__main__":
     main()
