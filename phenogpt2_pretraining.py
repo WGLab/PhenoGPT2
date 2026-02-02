@@ -23,53 +23,98 @@ gc.collect()
 torch.cuda.empty_cache()
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-def tokenize(prompt, tokenizer, add_eos_token=True):
-    CUTOFF_LEN = 11000 ## Maximum token length for a single input text (roughly 9000 words)
-    result = tokenizer(
-        prompt,
-        truncation=True,
-        max_length=CUTOFF_LEN,
-        padding=False,
-        return_tensors=None,
-    )
-    if (
-        result["input_ids"][-1] != tokenizer.eos_token_id
-        and len(result["input_ids"]) < CUTOFF_LEN
-        and add_eos_token
-    ):
-        result["input_ids"].append(tokenizer.eos_token_id)
-        result["attention_mask"].append(1)
-
-    result["labels"] = result["input_ids"].copy()
-
-    return result
 def generate_prompt(data_point):
-    instruction = "You are a genetic counselor and you are learning everything about Human Phenotype Ontology (HPO) database."    
-    base_prompt = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    instruction = "You are a genetic counselor and you are learning everything about Human Phenotype Ontology (HPO) database."
+    messages = [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": data_point['user']},
+        {"role": "assistant", "content": data_point['assistant']}
+        ]
+    return messages
+def tokenize_prompt(messages, tokenizer, cutoff_len=2000):
+    # ----- 1) Build prefix (system + user) -----
+    prefix_text = tokenizer.apply_chat_template(
+        messages[:-1],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
 
-    {system_prompt}<|eot_id|>
-    
-    <|start_header_id|>user<|end_header_id|>
+    # ----- 2) Build full conversation (includes assistant answer) -----
+    full_text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=False,
+        enable_thinking=False,
+    )
 
-    {user_prompt}<|eot_id|>
-    
-    <|start_header_id|>assistant<|end_header_id|>
-    {model_answer}<|eot_id|><|end_of_text|>"""
-    
-    prompt = base_prompt.format(system_prompt = instruction,
-                                user_prompt = data_point['user'],
-                                model_answer = data_point['assistant']
-                                )
-    return prompt
-def generate_and_tokenize_prompt(data_point, tokenizer): ## formulate the input text template and tokenize to numbers
-    full_prompt = generate_prompt(data_point) # if just use raw text as input => for pretraining
-    tokenized_full_prompt = tokenize(full_prompt, tokenizer)
-    return tokenized_full_prompt
+    # ----- 4) Tokenize prefix -----
+    prefix = tokenizer(
+        prefix_text,
+        truncation=True,
+        max_length=cutoff_len,
+        padding=False,
+        return_attention_mask=True,
+        add_special_tokens=False,
+    )
+
+    # ----- 5) Tokenize full -----
+    full = tokenizer(
+        full_text,
+        truncation=True,
+        max_length=cutoff_len,
+        padding=False,
+        return_attention_mask=True,
+        add_special_tokens=False,
+    )
+
+    input_ids = full["input_ids"]
+    attention_mask = full["attention_mask"]
+
+    # ----- 6) Labels: mask prefix tokens -----
+    labels = [-100] * len(input_ids)
+    prefix_len = len(prefix["input_ids"])
+    labels[prefix_len:] = input_ids[prefix_len:]
+
+    # ----- 7) Ensure EOS -----
+    if input_ids[-1] != tokenizer.eos_token_id and len(input_ids) < cutoff_len:
+        input_ids.append(tokenizer.eos_token_id)
+        attention_mask.append(1)
+        labels.append(tokenizer.eos_token_id)
+
+    return {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "labels": labels,
+    }
+
+
+def generate_and_tokenize(data_point, tokenizer):
+    messages = generate_prompt(data_point)
+    return tokenize_prompt(messages, tokenizer)
 def defining_args():
     return """
-    llama 3.1 8B
+    Qwen/Qwen3-8B
     pretraining on the HPO database
-    Save your note here
+    /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/pretraining_hpodb.pkl
+    Randomly initialize the embeddings 
+    embedding_layer = model.get_input_embeddings()
+    new_vocab_size = embedding_layer.num_embeddings
+    embedding_dim = embedding_layer.embedding_dim
+
+    num_new_tokens = new_vocab_size - original_vocab_size
+
+    if num_new_tokens > 0:
+        with torch.no_grad():
+            # Generate random embeddings (normal distribution)
+            new_weights = torch.empty((num_new_tokens, embedding_dim), dtype=embedding_layer.weight.dtype)
+            torch.nn.init.normal_(new_weights, mean=0.0, std=embedding_dim ** -0.5)
+
+            # Assign to new rows
+            embedding_layer.weight[original_vocab_size:] = new_weights
+    3 epochs
+    WE NEED TO TOKENIZE THE DATA '''AFTER''' ADDING THE NEW TOKENS. OTHERWISE, THEY LEARN THE NORMAL WAYS.
+    No validations
     """
 def main():
     """
@@ -115,7 +160,9 @@ def main():
     embedding_layer = model.get_input_embeddings()
     new_vocab_size = embedding_layer.num_embeddings
     embedding_dim = embedding_layer.embedding_dim
+
     num_new_tokens = new_vocab_size - original_vocab_size
+
     if num_new_tokens > 0:
         with torch.no_grad():
             # Generate random embeddings (normal distribution)
@@ -136,6 +183,7 @@ def main():
     val_data = {key: [item[key] for item in val_data] for key in val_data[0]}
     val_data = Dataset.from_dict(val_data)
     print("Setting training arguments")
+    
     training_args = TrainingArguments(
         output_dir=out_dir_model,
         label_names=["labels"],
@@ -158,13 +206,13 @@ def main():
         
         # =================== SAVING ===================
         save_strategy="steps",
-        save_steps=10000,  # More frequent saves, faster recovery
+        save_steps=1000,  # More frequent saves, faster recovery
         save_total_limit=2,  # Prevent disk bloating
         
         # =================== EVALUATION ===================
-        do_eval=True,
-        eval_strategy="steps",
-        eval_steps=10000,
+        do_eval=False,
+        # eval_strategy="steps",
+        # eval_steps=10000,
         
         # =================== TRAINING CONTROL ===================
         num_train_epochs=3,  # ~3 epochs likely enough for new-token adaptation
@@ -200,7 +248,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=train_data,
-        eval_dataset=val_data,
+        #eval_dataset=val_data,
         data_collator=DataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True)
     )
     for batch in trainer.get_train_dataloader():
@@ -208,24 +256,28 @@ def main():
         labels = batch["labels"]
         # Decode first sample in the batch
         input_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        #label_text = tokenizer.decode(labels[0], skip_special_tokens=True)
 
         print("Input:", input_text)
     #print("Label:", label_text)
-        if (labels >= 128257).sum() > 0:
+        if (labels >= 151669).sum() > 0:
             print("✅ Found in labels!")
         else:
             print("❌ Missing in labels!")
         break
-    print("Start training")
-    trainer.train()
-    trainer.save_model(out_dir_model) #save adapter
-    tokenizer.save_pretrained(out_dir_model)
-    # 2. Merge adapters into base model
-    #model = trainer.model.merge_and_unload()
+    try:
+        trainer.train()
+        trainer.save_model(out_dir_model) #save adapter
+        tokenizer.save_pretrained(out_dir_tokenizer)
+        # 2. Merge adapters into base model
+        #model = trainer.model.merge_and_unload()
 
-    # 3. Save the merged model
-    #model.save_pretrained(out_dir_full_model)
-    
-    print(os.system("nvidia-smi"))
+        # 3. Save the merged model
+        #model.save_pretrained(out_dir_full_model)
+        
+        print(os.system("nvidia-smi"))
+    except Exception as e:
+        print(e)
+        print(os.system("nvidia-smi"))
 if __name__ == "__main__":
     main()

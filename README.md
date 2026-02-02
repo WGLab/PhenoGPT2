@@ -90,8 +90,7 @@ Model Descriptions | Module | Base Model | 🤗 Huggingface Hub |
     "demographics": {
         'age': '1-year-old',
         'sex': 'male',
-        'ethnicity': 'Korean',
-        'race': 'Asian'
+        'ethnicity': 'Korean'
     },
     "phenotypes": {
         "persistent fever": {
@@ -102,8 +101,28 @@ Model Descriptions | Module | Base Model | 🤗 Huggingface Hub |
         }
         "brachycephaly": {
             'HPO_ID':'HP:0000248', 'onset':'5 months old'
+        },
+    },
+    "filtered_phenotypes":{
+        "persistent fever": {
+            'HPO_ID':'HP:0033399', 'onset':'unknown'
+        },
+        "brachycephaly": {
+            'HPO_ID':'HP:0000248', 'onset':'5 months old'
         }
     },
+    "negation_analysis": {
+      "demographics" : {
+        'age': {'evidence': 'supporting texts', 'correct': True/False},
+        'sex': {'evidence': 'supporting texts', 'correct': True/False},
+        'ethnicity': {'evidence': 'supporting texts', 'correct': True/False},
+        },
+      "phenotypes": {
+        "persistent fever": {'evidence': 'supporting texts', 'correct': True/False, 'type': 'patient'}
+        "shortness of breath": {'evidence': 'supporting texts', 'correct': True/False, 'type': 'family'}
+        "brachycephaly": {'evidence': 'supporting texts', 'correct': True/False, 'type': 'patient'}
+      }
+    }
     "pid": "pid1"
   },
   'image':{}
@@ -125,8 +144,9 @@ Please use the following command (along with your scheduler system (i.e SLURM)):
 bash run_inference.sh -i ./data/example/text_examples.json \
          -o example_testing \
          -model_dir ./models/phenogpt2/ \
-         -index 0 
-         -negation 
+         -negation_model YOUR_QWEN_MODEL \
+         -index 0 \
+         -negation \
          -wc 0"
 ```
 #### Required Arguments
@@ -141,6 +161,7 @@ bash run_inference.sh -i ./data/example/text_examples.json \
 | `-lora`, `--lora`           | Enable this flag if your model is **LoRA-adapted**.                                                                   |
 | `-index`, `--index`         | Identifier string for saving outputs. Useful for tracking multiple runs.                                            |
 | `-negation`, `--negation`   | By default, **negation filtering is disabled**. Use this flag to **enable** it.                                     |
+| `-negation_model`, `--negation_model`   | By default, **negation model is Qwen/Qwen3-4B-Instruct-2507**. You can try other Qwen models if needed. We found Qwen is very useful in negation detection (with detailed prompt)                                     |
 | `--text_only`               | Use only the **text module** of the model, ignoring visual inputs.                                                  |
 | `--vision_only`             | Use only the **vision module**, ignoring text inputs.                                                               |
 | `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` or `llama-vision` (default). It is used along with the text module; otherwise simply use --vision_only instead.                                          |

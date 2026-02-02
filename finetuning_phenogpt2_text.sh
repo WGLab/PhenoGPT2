@@ -1,54 +1,125 @@
 #!/bin/bash
+set -euo pipefail
+
+########################################
+# Usage
+########################################
 usage() {
-    echo "Usage: $0 -train_data <dir> [-eval_data <dir>] -name <run_name> -model_dir <model_dir> [-lora]"
+    echo "Usage: $0 \
+--pretrain_model <model_dir> \
+--train_data <train.pkl> \
+--val_data <val.pkl> \
+--output_dir <output_dir>"
     exit 1
 }
 
-# -----------------------------------------------------------------------------
-# Parse command‑line options
-# -----------------------------------------------------------------------------
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        -train_data|--train_data)   train_data="$2"; shift 2 ;;
-        -eval_data|--eval_data)   eval_data="$2"; shift 2 ;;
-        -name|--name)               run_name="$2";  shift 2 ;;
-        -model_dir|--model_dir)     model_dir="$2"; shift 2 ;;
-        -lora)                      lora=true;      shift   ;;
-        -h|--help)                  usage ;;
-        *)  echo "Unknown option: $1"; usage ;;
+########################################
+# Parse arguments
+########################################
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --pretrain_model) pretrain_model="$2"; shift ;;
+        --train_data)     train_data="$2"; shift ;;
+        --val_data)       val_data="$2"; shift ;;
+        --output_dir)     output_dir="$2"; shift ;;
+        *) echo "Unknown argument: $1"; usage ;;
     esac
+    shift
 done
 
-# -----------------------------------------------------------------------------
-# Check required arguments
-# -----------------------------------------------------------------------------
-if [[ -z "$train_data" || -z "$run_name" ]]; then
-    echo "Error: -train_data and -name are required."
+########################################
+# Validate required args
+########################################
+if [[ -z "${pretrain_model:-}" || -z "${train_data:-}" || -z "${output_dir:-}" ]]; then
+    echo "ERROR: --pretrain_model, --train_data, and --output_dir are required"
     usage
 fi
 
-# -----------------------------------------------------------------------------
-# Build and run the command
-# -----------------------------------------------------------------------------
-cmd="python phenogpt2_training.py \
-      -train_data \"${train_data}\" \
-      -name \"${run_name}\""
+########################################
+# GPU detection (Slurm-safe)
+########################################
+NUM_GPUS="${SLURM_GPUS_ON_NODE:-1}"
+echo "Detected NUM_GPUS=${NUM_GPUS}"
 
-[[ -n "$model_dir" ]] && cmd+=" -model_dir \"${model_dir}\""
-[[ -n "$eval_data" ]] && cmd+=" -eval_data \"${eval_data}\""
-[[ -n "$lora" ]] && cmd+=" -lora"
+########################################
+# Deterministic, collision-proof port
+########################################
+BASE_PORT=12000
 
-echo "Executing: $cmd"
-eval "$cmd"
+if [[ -n "${SLURM_JOB_ID:-}" ]]; then
+    MASTER_PORT=$((BASE_PORT + SLURM_JOB_ID % 20000))
+else
+    MASTER_PORT=$((BASE_PORT + $$ % 20000))
+fi
 
-# -----------------------------------------------------------------------------
-# Example sbatch submissions
-# -----------------------------------------------------------------------------
-# sbatch -p gpu-xe9680q --gres=gpu:h100:6 --cpus-per-gpu=3 --mem-per-cpu=50G \
-#        --time=5-00:00:00 --profile=all --export=ALL --mail-type=ALL --mail-user= \
-#        --wrap="bash finetuning_phenogpt2_text.sh \
-#                  -train_data ./data/training_data/training_ft_data.pkl \
-#                  -eval_data ./data/training_data/val_ft_data.pkl \
-#                  -name phenogpt2 \
-#                  -model_dir /models/hpo_aware_pretrain/ \
-#                  -lora"
+MASTER_ADDR="127.0.0.1"
+
+echo "Using MASTER_ADDR=${MASTER_ADDR}"
+echo "Using MASTER_PORT=${MASTER_PORT}"
+
+########################################
+# Triton cache (avoid NFS issues)
+########################################
+export TRITON_CACHE_DIR="/tmp/${USER}/triton_cache"
+mkdir -p "${TRITON_CACHE_DIR}"
+
+########################################
+# NCCL sanity
+########################################
+export NCCL_ASYNC_ERROR_HANDLING=1
+export NCCL_DEBUG=WARN
+
+########################################
+# DeepSpeed config (EDIT IF NEEDED)
+########################################
+DS_CONFIG="./ds_z3.json"
+
+########################################
+# Logging
+########################################
+echo "========================================"
+echo "Host: $(hostname)"
+echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-N/A}"
+echo "Start time: $(date)"
+echo "Pretrain model: ${pretrain_model}"
+echo "Train data: ${train_data}"
+echo "Val data: ${val_data:-NONE}"
+echo "Output dir: ${output_dir}"
+echo "DeepSpeed config: ${DS_CONFIG}"
+echo "========================================"
+
+########################################
+# Build command (NO python here)
+########################################
+CMD="phenogpt2_training.py \
+  --pretrain_model ${pretrain_model} \
+  --train_data ${train_data} \
+  --output_dir ${output_dir} \
+  --deepspeed ${DS_CONFIG}"
+
+[[ -n "${val_data:-}" ]] && CMD="${CMD} --val_data ${val_data}"
+
+########################################
+# Launch DeepSpeed (FORCED PORT)
+########################################
+echo "========================================"
+echo "Launching DeepSpeed"
+echo "Command:"
+echo "deepspeed --num_gpus=${NUM_GPUS} \
+--master_addr ${MASTER_ADDR} \
+--master_port ${MASTER_PORT} \
+${CMD}"
+echo "========================================"
+
+deepspeed \
+  --num_gpus="${NUM_GPUS}" \
+  --master_addr "${MASTER_ADDR}" \
+  --master_port "${MASTER_PORT}" \
+  ${CMD}
+
+echo "End time: $(date)"
+
+# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:8   --cpus-per-gpu=2   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   run_phenogpt_deepspeed.sh   --pretrain_model /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_8B_pretraining_010126/model   --train_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_train_synthetic_labels_qwen_8b.pkl   --val_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_val_synthetic_labels_qwen_8b.pkl   --output_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_ehr_8b_ft_updated
+# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:6   --cpus-per-gpu=2   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   run_phenogpt_deepspeed.sh   --pretrain_model /home/nguyenqm/projects/github/PhenoGPT2/hpo_aware_pretrain/model  --train_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_train_synthetic_labels_llama_8b.pkl   --val_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_val_synthetic_labels_llama_8b.pkl   --output_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_llama_ehr_8b_ft_updated
+
+# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:8   --cpus-per-gpu=1   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   run_phenogpt_deepspeed.sh   --pretrain_model /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_8B_pretraining_010126/model   --train_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/phenotagger_data_20260131/combined_train_synthetic_labels_qwen_8b.pkl   --val_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/phenotagger_data_20260131/combined_val_synthetic_labels_qwen_8b.pkl   --output_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_ehr_8b_ft_nofilter

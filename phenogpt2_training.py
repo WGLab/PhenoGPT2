@@ -1,220 +1,397 @@
 import os
-from datasets import load_dataset, Dataset#, load_from_disk
-import datasets
-import torch
-from tokenizers import AddedToken, pre_tokenizers
-from transformers import Trainer, TrainingArguments, AutoTokenizer, AutoModelForCausalLM
-import numpy as np
-from transformers import DataCollatorForSeq2Seq
-torch.backends.cuda.matmul.allow_tf32 = True
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from datetime import datetime
+import gc
+import json, re
+import pickle
+import argparse
 from tqdm.auto import tqdm
-import gc, json, pickle, joblib, argparse
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    get_peft_model_state_dict,
-    prepare_model_for_kbit_training,
-    PeftModel
+
+import torch
+from datasets import Dataset
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    Trainer,
+    TrainingArguments,
 )
-gc.collect()
-torch.cuda.empty_cache()
-#os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
-device = "cuda" if torch.cuda.is_available() else "cpu"
-with open('./data/hpo_added_tokens.json', 'r') as f:
-    name2hpo = json.load(f)
-def form_json_output(data_point):
-    phenotype_dict = {phen:{'HPO_ID':v['HPO_ID'],'onset':v['onset']} for phen,v in data_point['output']['phenotypes'].items() if phen in name2hpo.keys()}
-    demographics = data_point['output']['demographics'].copy()
-    if demographics['ethnicity'] == 'unknown':
-        demographics['race'] = 'unknown'
-    return {'demographics':demographics, 'phenotypes':phenotype_dict}
 
-def tokenize(prompt, tokenizer, add_eos_token=True):
-    CUTOFF_LEN = 15000 ## Maximum token length for a single input text (roughly 9000 words)
-    result = tokenizer(
-        prompt,
-        truncation=True,
-        max_length=CUTOFF_LEN,
-        padding=False,
-        return_tensors=None,
+# -------------------------
+# Argument parser
+# -------------------------
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="PhenoGPT2 Qwen3 finetuning (HPO + demographics extraction) - DeepSpeed friendly"
     )
-    if (
-        result["input_ids"][-1] != tokenizer.eos_token_id
-        and len(result["input_ids"]) < CUTOFF_LEN
-        and add_eos_token
-    ):
-        result["input_ids"].append(tokenizer.eos_token_id)
-        result["attention_mask"].append(1)
 
-    result["labels"] = result["input_ids"].copy()
+    parser.add_argument("--pretrain_model", type=str, required=True, help="Path to pretrained Qwen3 model dir")
+    parser.add_argument("--train_data", type=str, required=True, help="Path to training data pickle file")
+    parser.add_argument("--val_data", type=str, required=True, help="Path to validation data pickle file")
+    parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
 
-    return result
-def generate_prompt(data_point):
-    json_output = form_json_output(data_point)
-    instruction = "You are a genetic counselor specializing in extracting demographic details and Human Phenotype Ontology (HPO) terms from text and generating a JSON object. Your task is to provide accurate and concise information without generating random answers. When demographic details or phenotype information is not explicitly mentioned in the input, use 'unknown' as the value."
-    question = "Read the following input text and generate a JSON-formatted output with the following keys: demographics and phenotypes. For the demographics key, create a sub-dictionary with age, sex, ethnicity, and race as keys, and where applicable, imply the race from ethnicity or ethnicity from race. For the phenotype key, create a sub-dictionary where each HPO term is a key, and the value is a sub-dictionary that contains corresponding HPO identifier (HPO_ID) and the patient’s age (onset) when the phenotype first appeared, if mentioned in the text. If any information is unavailable, return 'unknown' for that field.\nInput: "
-    #question = "Read the following input text and generate a JSON-formatted output with the following keys: demographics and phenotypes. For the demographics key, create a sub-dictionary with age, sex, ethnicity, and race as keys, and where applicable, imply the race from ethnicity or ethnicity from race. For the phenotype key, create a sub-dictionary where each HPO term is a key, and the value is a list that contains corresponding HPO identifier and followed by the patient’s age (onset) when the phenotype first appeared, if mentioned in the text. If any information is unavailable, return 'unknown' for that field.\nInput: "
-    
-    base_prompt = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+    # DeepSpeed passthrough
+    parser.add_argument("--deepspeed", default=None, help="Path to DeepSpeed config json (e.g., ds_zero2_bf16.json)")
+    parser.add_argument(
+        "--local_rank",
+        type=int,
+        default=-1,
+        help="local rank for distributed training (added by DeepSpeed launcher)",
+    )
 
-    {system_prompt}<|eot_id|>
-    
-    <|start_header_id|>user<|end_header_id|>
+    # (Optional) tokenize knobs
+    parser.add_argument("--cutoff_len", type=int, default=13000, help="Max total tokens (prefix+answer)")
+    parser.add_argument("--max_prefix_tokens", type=int, default=10000, help="If prefix exceeds, run clean_note()")
 
-    {user_prompt}<|eot_id|>
-    
-    <|start_header_id|>assistant<|end_header_id|>
-    {model_answer}<|eot_id|><|end_of_text|>"""
-    
-    prompt = base_prompt.format(system_prompt = instruction,
-                                user_prompt = question + data_point['input'],
-                                model_answer = "\n|==|Response|==|\n" + str(json_output)
-                                )
-    return prompt
-def generate_and_tokenize_prompt(data_point, tokenizer): ## formulate the input text template and tokenize to numbers
-    full_prompt = generate_prompt(data_point) # if just use raw text as input => for pretraining
-    tokenized_full_prompt = tokenize(full_prompt, tokenizer)
-    return tokenized_full_prompt
-def defining_args():
-    return """
-    llama 3.1 8B
-    any note you want to save here
-    """
+    return parser.parse_args()
+
+
+# -------------------------
+# Utility / prompt helpers
+# -------------------------
+def load_hpo_mapping(path="hpo_added_tokens.json"):
+    with open(path, "r") as f:
+        return json.load(f)
+
+
+def form_json_output(data_point, name2hpo):
+    phenotype_dict = {
+        phen: {
+            "HPO_ID": v["HPO_ID"],
+            "onset": v["onset"],
+        }
+        for phen, v in data_point["output"]["phenotypes"].items()
+        if phen in name2hpo
+    }
+    demographics = {k: v for k, v in data_point["output"]["demographics"].items() if k != "race"}
+    return {"demographics": demographics, "phenotypes": phenotype_dict}
+
+
+def generate_prompt(data_point, name2hpo):
+    json_output = form_json_output(data_point, name2hpo)
+
+    instruction = (
+        "You are a genetic counselor specializing in extracting demographic details "
+        "and Human Phenotype Ontology (HPO) terms from text and generating a JSON object. "
+        "Your task is to provide accurate and concise information without generating random answers. "
+        "When demographic details or phenotype information is not explicitly mentioned in the input, "
+        "use 'unknown' as the value."
+    )
+
+    question = (
+        "Read the following input text and generate a JSON-formatted output with the following keys: "
+        "demographics and phenotypes. For the demographics key, create a sub-dictionary with age, sex, "
+        "and ethnicity as keys. For the phenotype key, create a sub-dictionary where each HPO term is a key, "
+        "and the value is a sub-dictionary that contains corresponding HPO identifier (HPO_ID) and the "
+        "patient’s age (onset) when the phenotype first appeared, if mentioned in the text. "
+        "If any information is unavailable, return 'unknown' for that field.\nInput: "
+    )
+    if 'clinical_note' in data_point:
+        clinical_note = data_point["clinical_note"].replace("'", "").replace('"', "")
+    else:
+        clinical_note = data_point["input"].replace("'", "").replace('"', "")
+    messages = [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": question + clinical_note},
+        {"role": "assistant", "content": json.dumps(json_output)},
+    ]
+    return messages
+
+
+LAB_VALUE_TOKEN = re.compile(
+    r"""
+    \b
+    [A-Za-z][A-Za-z0-9()]*   # lab name (Na, HCO3, Creat, CK(CPK))
+    -
+    [-+]?\d+(\.\d+)?        # numeric value
+    [*#]?                   # optional abnormal flag
+    \b
+    """,
+    re.VERBOSE,
+)
+
+def is_lab_heavy_line(line, min_lab_tokens=3):
+    tokens = LAB_VALUE_TOKEN.findall(line)
+    return len(tokens) >= min_lab_tokens
+
+def remove_inline_lab_blocks(text, min_block_lines=1):
+    lines = text.splitlines()
+    cleaned = []
+    i = 0
+    while i < len(lines):
+        if is_lab_heavy_line(lines[i]):
+            j = i
+            while j < len(lines) and (is_lab_heavy_line(lines[j]) or lines[j].strip().startswith("___")):
+                j += 1
+            if j - i >= min_block_lines:
+                i = j
+                continue
+        cleaned.append(lines[i])
+        i += 1
+    return "\n".join(cleaned)
+
+DISCHARGE_TO_IM_END_RE = re.compile(
+    r"(?is)"
+    r"[ \t_]*discharge\s+medications\s*:"
+    r".*?"
+    r"(?=<\|im_end\|>)"
+)
+ADMISSION_TO_IM_END_RE = re.compile(
+    r"(?is)"
+    r"[ \t_]*medications\s+on\s+admission\s*:"
+    r".*?"
+    r"(?=<\|im_end\|>)"
+)
+def remove_discharge_meds_until_im_end(text: str) -> str:
+    return DISCHARGE_TO_IM_END_RE.sub("", text)
+def remove_admission_meds_until_im_end(text: str) -> str:
+    return ADMISSION_TO_IM_END_RE.sub("", text)
+def clean_note(note: str):
+    note = remove_discharge_meds_until_im_end(note)
+    note = remove_admission_meds_until_im_end(note)
+    note = remove_inline_lab_blocks(note)
+    return note
+
+
+def tokenize_prompt(messages, tokenizer, cutoff_len=10000, max_prefix_tokens=10000):
+    # ----- 1) Build PREFIX via chat template -----
+    prefix_text = tokenizer.apply_chat_template(
+        messages[:-1],
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+
+    # ----- 2) Extract assistant content directly -----
+    assert messages[-1]["role"] == "assistant"
+    assistant_text = messages[-1]["content"]
+
+    # ----- 3) Clean prefix if too long -----
+    prefix_tmp = tokenizer(prefix_text, add_special_tokens=False)
+    if len(prefix_tmp["input_ids"]) >= max_prefix_tokens:
+        prefix_text = clean_note(prefix_text)
+
+    # ----- 4) Tokenize separately (NO truncation) -----
+    prefix_ids = tokenizer(prefix_text, add_special_tokens=False, return_attention_mask=False)["input_ids"]
+    assistant_ids = tokenizer(assistant_text, add_special_tokens=False, return_attention_mask=False)["input_ids"]
+
+    # ----- 5) Ensure assistant EOS ONCE -----
+    if not assistant_ids or assistant_ids[-1] != tokenizer.eos_token_id:
+        assistant_ids.append(tokenizer.eos_token_id)
+
+    # ----- 6) Enforce cutoff (truncate PREFIX ONLY) -----
+    total_len = len(prefix_ids) + len(assistant_ids)
+    if total_len > cutoff_len:
+        keep_prefix = cutoff_len - len(assistant_ids)
+        if keep_prefix <= 0:
+            raise ValueError("Assistant output alone exceeds cutoff_len — cannot truncate safely.")
+        prefix_ids = prefix_ids[-keep_prefix:]
+
+    # ----- 7) Assemble -----
+    input_ids = prefix_ids + assistant_ids
+    attention_mask = [1] * len(input_ids)
+
+    # ----- 8) Labels: mask prefix -----
+    labels = [-100] * len(prefix_ids) + assistant_ids.copy()
+
+    return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
+
+def generate_and_tokenize(data_point, tokenizer, name2hpo, cutoff_len, max_prefix_tokens):
+    messages = generate_prompt(data_point, name2hpo)
+    return tokenize_prompt(messages, tokenizer, cutoff_len=cutoff_len, max_prefix_tokens=max_prefix_tokens)
+
+
+# -------------------------
+# Collator (safe for causal LM + custom labels)
+# -------------------------
+def make_causal_lm_collator(tokenizer, pad_to_multiple_of=8):
+    pad_id = tokenizer.pad_token_id
+
+    def _collate(features):
+        # length to pad to (optionally multiple-of for Tensor Cores)
+        max_len = max(len(f["input_ids"]) for f in features)
+        if pad_to_multiple_of is not None and pad_to_multiple_of > 1:
+            max_len = ((max_len + pad_to_multiple_of - 1) // pad_to_multiple_of) * pad_to_multiple_of
+
+        def pad(seq, pad_value):
+            return seq + [pad_value] * (max_len - len(seq))
+
+        input_ids = torch.tensor([pad(f["input_ids"], pad_id) for f in features], dtype=torch.long)
+        attention_mask = torch.tensor([pad(f.get("attention_mask", [1]*len(f["input_ids"])), 0) for f in features], dtype=torch.long)
+        labels = torch.tensor([pad(f["labels"], -100) for f in features], dtype=torch.long)
+
+        return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
+    return _collate
+
+
+# -------------------------
+# Main
+# -------------------------
 def main():
-    """
-    Set training parameters and train model
-    """
-    parser = argparse.ArgumentParser(description="PhenoGPT2 HPO Aware Pretrain Model",
-                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-train_data", "--train_data", required = True, help="directory to training dataset")
-    parser.add_argument("-eval_data", "--eval_data", required = False, default = None, help="directory to evaluation train dataset")
-    parser.add_argument("-name", "--name", required = True, help="directory to output folder")
-    parser.add_argument("-lora", "--lora", required = False, action="store_true", help="LoRA finetuning")
-    parser.add_argument("-model_dir", "--model_dir", required = False, help="Directory to the Vision Foundation Model")
-    args = parser.parse_args()
-    if args.model_dir:
-        model_name = args.model_dir
-    else:
-        model_name = 'meta-llama/Llama-3.1-8B-Instruct'
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-    if args.name:
-        out_dir_model = os.getcwd() + '/models/' + args.name
-    else:
-        out_dir_model = os.getcwd() + '/models/phenogpt2/'
-    os.makedirs(out_dir_model, exist_ok=True)
-    # with open(out_dir_model + '/params.txt', 'w') as f:
-    #     f.write(defining_args())
-    print(out_dir_model)
-    #model_name = "/mnt/isilon/wang_lab/shared/Llama3_1/Meta-Llama-3.1-8B-Instruct/" # Replace your tokenizer llama directory here
-    model=AutoModelForCausalLM.from_pretrained(model_name,do_sample=True, #quantization_config=quantization_config,
-                                            attn_implementation="flash_attention_2",
-                                            torch_dtype=torch.bfloat16, device_map = 'auto')
+    args = parse_args()
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    model_out = os.path.join(args.output_dir, "model")
+    tokenizer_out = os.path.join(args.output_dir, "tokenizer")
+    os.makedirs(model_out, exist_ok=True)
+    os.makedirs(tokenizer_out, exist_ok=True)
+
+    # Save run config
+    with open(os.path.join(args.output_dir, "run_args.json"), "w") as f:
+        json.dump(vars(args), f, indent=2)
+
+    # Debug DS env
+    print(
+        f"[RANK DEBUG] MASTER_ADDR={os.environ.get('MASTER_ADDR')} "
+        f"MASTER_PORT={os.environ.get('MASTER_PORT')} "
+        f"RANK={os.environ.get('RANK')} "
+        f"LOCAL_RANK={os.environ.get('LOCAL_RANK')} "
+        f"WORLD_SIZE={os.environ.get('WORLD_SIZE')}",
+        flush=True
+    )
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.pretrain_model, use_fast=True)
+
+    # Ensure pad token exists (important for batching)
+    if tokenizer.pad_token is None:
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+    tokenizer.padding_side = "left"
+    # Load HPO mapping
+    name2hpo = load_hpo_mapping()
+
+    # Load model (IMPORTANT: no device_map="auto" for DeepSpeed)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.pretrain_model,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",  # keep if your env supports it
+        # trust_remote_code=True/False depending on your Qwen3 setup
+    )
+
+    model.config.use_cache = False
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.config.pad_token_id = tokenizer.pad_token_id
     model.resize_token_embeddings(len(tokenizer))
-    with open(args.train_data, 'rb') as f: # REPLACE YOUR TRAINING DATA HERE
-        train_data = pickle.load(f)
-    print(generate_prompt(train_data[0]))
-    train_data = list(map(lambda x: generate_and_tokenize_prompt(x, tokenizer), tqdm(train_data, desc="Processing train")))
-    train_data = {key: [item[key] for item in train_data] for key in train_data[0]}
-    train_data = Dataset.from_dict(train_data)
-    if args.eval_data:
-        do_eval = True
-        with open(args.eval_data, 'rb') as f: # REPLACE VALIDATION DATA HERE
-            val_data = pickle.load(f)
-        val_data = list(map(lambda x: generate_and_tokenize_prompt(x, tokenizer), tqdm(val_data, desc="Processing val")))
-        val_data = {key: [item[key] for item in val_data] for key in val_data[0]}
-        val_data = Dataset.from_dict(val_data)
-    else:
-        do_eval = False
-    training_args = TrainingArguments(
-        output_dir=out_dir_model,
-    
-        # =================== PERFORMANCE ===================
-        per_device_train_batch_size=4,  # H100 can handle this
-        gradient_accumulation_steps=20,   # Total batch size: 32 * 4 * 8 = 1024
-        dataloader_num_workers=4,
-        fp16=False,  # Using bf16 instead
-        bf16=True,   # Preferred on H100 for better throughput and stability
-        tf32=True,
-        
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={'use_reentrant': False},
-        optim="adamw_torch_fused",  # Fused AdamW performs well on H100
-        
-        # =================== LOGGING ===================
-        logging_dir=f"{out_dir_model}/logs",
-        logging_strategy="steps",
-        logging_steps=1000,  # More frequent for better monitoring
-        
-        # =================== SAVING ===================
-        save_strategy="steps",
-        save_steps=10000,  # More frequent saves, faster recovery
-        save_total_limit=2,  # Prevent disk bloating
-        
-        # =================== EVALUATION ===================
-        do_eval=do_eval,
-        eval_strategy="steps",
-        eval_steps=2000,
-        per_device_eval_batch_size=4,
-        eval_accumulation_steps=4,
-        
-        # =================== TRAINING CONTROL ===================
-        num_train_epochs=10,  # ~3 epochs likely enough for new-token adaptation
-        max_steps=-1,        # Let epochs control the length
-        
-        warmup_ratio=0.03,  # ~3–5% is enough
-        weight_decay=0.05,  # Slightly stronger regularization
-        learning_rate=1e-5,
-        # =================== DISTRIBUTED ===================
-        ddp_find_unused_parameters=False,  # Needed for gradient checkpointing + DDP
+    ## set LLaMA chat template
+    config = model.config
+    if config.model_type == 'llama':
+        tokenizer.chat_template = tokenizer.chat_template = """{% for message in messages %}
+    {% if message['role'] == 'system' %}
+    <|start_header_id|>system<|end_header_id|>
+    {{ message['content'] }}<|eot_id|>
+    {% elif message['role'] == 'user' %}
+    <|start_header_id|>user<|end_header_id|>
+    {{ message['content'] }}<|eot_id|>
+    {% elif message['role'] == 'assistant' %}
+    <|start_header_id|>assistant<|end_header_id|>
+    {{ message['content'] }}<|eot_id|>
+    {% endif %}
+    {% endfor %}
+    {% if add_generation_prompt %}
+    <|start_header_id|>assistant<|end_header_id|>
+    {% endif %}
+    """
+    tokenizer.save_pretrained(tokenizer_out)
 
-        # =================== MISC ===================
+    # Load data
+    with open(args.train_data, "rb") as f:
+        train_data_raw = pickle.load(f)
+    with open(args.val_data, "rb") as f:
+        val_data_raw = pickle.load(f)
+
+    train_data_processed = list(train_data_raw.values()) if isinstance(train_data_raw, dict) else train_data_raw
+    val_data_processed = list(val_data_raw.values()) if isinstance(val_data_raw, dict) else val_data_raw
+
+    print("Example prompt:\n", generate_prompt(train_data_processed[0], name2hpo), flush=True)
+
+    # Tokenize (simple eager version, like your original)
+    train_data = [
+        generate_and_tokenize(dp, tokenizer, name2hpo, args.cutoff_len, args.max_prefix_tokens)
+        for dp in tqdm(train_data_processed, desc="Tokenizing train")
+    ]
+    val_data = [
+        generate_and_tokenize(dp, tokenizer, name2hpo, args.cutoff_len, args.max_prefix_tokens)
+        for dp in tqdm(val_data_processed, desc="Tokenizing val")
+    ]
+
+    train_dataset = Dataset.from_dict({k: [d[k] for d in train_data] for k in train_data[0]})
+    val_dataset = Dataset.from_dict({k: [d[k] for d in val_data] for k in val_data[0]})
+
+    data_collator = make_causal_lm_collator(tokenizer, pad_to_multiple_of=8)
+
+    training_args = TrainingArguments(
+        output_dir=args.output_dir,
+
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=8,
+        dataloader_num_workers=4,
+
+        bf16=True,
+        tf32=True,
+
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+
+        optim="adamw_torch_fused",
+
+        logging_strategy="steps",
+        logging_steps=1000,
+
+        save_strategy="steps",
+        save_steps=10000,
+        save_total_limit=2,
+
+        do_eval=True,
+        eval_strategy="steps",
+        eval_steps=1000,
+        per_device_eval_batch_size=2,
+        eval_accumulation_steps=4,
+
+        num_train_epochs=10,
+        warmup_ratio=0.03,
+        weight_decay=0.05,
+        learning_rate=1e-5,
+
+        # IMPORTANT: only meaningful for DDP; DeepSpeed handles this too, but it's fine to keep:
+        ddp_find_unused_parameters=False,
+
         push_to_hub=False,
-        resume_from_checkpoint=True  # Auto-resume
+
+        # NEW: enable DeepSpeed if provided
+        deepspeed=args.deepspeed,
+        # Optional: helps long runs resume cleanly
+        # save_safetensors=True,
+        # report_to="none",
     )
-    if args.lora:
-        LORA_R = 64 #128
-        LORA_ALPHA = 128 #256
-        LORA_DROPOUT= 0.05
-        LORA_TARGET_MODULES = ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj","lm_head"]
-        model = prepare_model_for_kbit_training(model)
-        config = LoraConfig(
-            r=LORA_R,
-            lora_alpha=LORA_ALPHA,
-            target_modules=LORA_TARGET_MODULES,
-            lora_dropout=LORA_DROPOUT,
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
-        model.gradient_checkpointing_enable()
-        model = get_peft_model(model, config)
-    trainer=Trainer(
+
+    trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=train_data,
-        eval_dataset=val_data,
-        data_collator=DataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8, return_tensors="pt", padding=True)
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        data_collator=data_collator,
     )
+
+    # quick sanity batch
     for batch in trainer.get_train_dataloader():
         input_ids = batch["input_ids"]
         labels = batch["labels"]
-        # Decode first sample in the batch
         input_text = tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        #label_text = tokenizer.decode(labels[0], skip_special_tokens=True)
+        print("Input (decoded):", input_text[:500], "...\n", flush=True)
 
-        print("Input:", input_text)
-    #print("Label:", label_text)
-        if (labels >= 128257).sum() > 0:
-            print("✅ Found in labels!")
+        if (labels >= 151669).sum() > 0:
+            print("✅ Found >=151669 in labels!", flush=True)
         else:
-            print("❌ Missing in labels!")
+            print("❌ Missing >=151669 in labels!", flush=True)
         break
-    trainer.train()
-    trainer.save_model(out_dir_model)
-    tokenizer.save_pretrained(out_dir_model)
-    print(os.system("nvidia-smi"))
+
+    try:
+        trainer.train()
+        trainer.save_model(model_out)
+    except Exception as e:
+        print(f"Error: {e}", flush=True)
+        os.system("nvidia-smi")
+
 if __name__ == "__main__":
     main()

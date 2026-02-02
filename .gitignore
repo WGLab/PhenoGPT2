@@ -1,6 +1,10 @@
 # 1. Ignore files starting with "slurm"
 slurm*
-
+inference2.py
+inference3.py
+negation_filtering.py
+run_inference2.sh
+run_filtering.sh
 # 2. Keep subfolders in ./models/ but ignore their contents
 /models/bert_filtering/*
 !/models/bert_filtering/.gitkeep
@@ -14,6 +18,8 @@ slurm*
 /models/llama-vision-phenogpt2/*
 !/models/llama-vision-phenogpt2/.gitkeep
 
+/models/*
+
 # 3. Ignore .ipynb_checkpoints and __pycache__ folders anywhere
 **/.ipynb_checkpoints/
 **/__pycache__/
@@ -25,3 +31,7 @@ embedding_cache
 LLaVA
 
 phenogpt2.egg-info
+
+/scripts/prompting_old.py
+/scripts/formatting_results2.py
+/scripts/clean_data*

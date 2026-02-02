@@ -22,7 +22,8 @@ dependencies = [
   "spacy",
   "medspacy",
   "xformers",
-  "sentence_transformers"
+  "sentence_transformers",
+  "deepspeed"
 ]
 
 [build-system]

@@ -47,4 +47,4 @@ eval "$cmd"
 #        --wrap="bash pretrain_hpo_aware.sh \
 #                  -train_data ./data/training_data/pretrain_data.pkl \
 #                  -name hpo_pretrain_aware \
-#                  -model_dir meta-llama/Llama-3.1-8B"
+#                  -model_dir Qwen/Qwen3-8B"
