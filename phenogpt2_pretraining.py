@@ -125,7 +125,8 @@ def main():
     parser.add_argument("-train_data", "--train_data", required = True, help="directory to training dataset")
     parser.add_argument("-name", "--name", required = True, help="directory to output folder")
     parser.add_argument("-lora", "--lora", required = False, action="store_true", help="LoRA finetuning")
-    parser.add_argument("-model_dir", "--model_dir", required = False, help="Directory to the Vision Foundation Model")
+    parser.add_argument("-model_dir", "--model_dir", required = False, help="Directory to the Foundation Model")
+    parser.add_argument("-attn_implementation", "--attn_implementation", required=False, default='eager', help="Default implementation 'eager' is turned on by default. Note that: FlashAttention may not be supported on arm64/aarch64 platforms. Flash Attention helps faster inference and lower memory usage.")
     args = parser.parse_args()
     if args.model_dir:
         model_name = args.model_dir
@@ -148,7 +149,7 @@ def main():
     original_vocab_size = len(tokenizer)
     print('Start loading model')
     model=AutoModelForCausalLM.from_pretrained(model_name,do_sample=True, #quantization_config=quantization_config,
-                                            attn_implementation="flash_attention_2",
+                                            attn_implementation=args.attn_implementation,  # keep if your env supports it
                                             torch_dtype=torch.bfloat16, device_map = 'auto')
     with open('./data/hpo_added_tokens.json', 'r') as f:
         name2hpo = json.load(f)
@@ -268,7 +269,7 @@ def main():
     try:
         trainer.train()
         trainer.save_model(out_dir_model) #save adapter
-        tokenizer.save_pretrained(out_dir_tokenizer)
+        tokenizer.save_pretrained(out_dir_model)
         # 2. Merge adapters into base model
         #model = trainer.model.merge_and_unload()
 

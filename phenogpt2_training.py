@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument("--train_data", type=str, required=True, help="Path to training data pickle file")
     parser.add_argument("--val_data", type=str, required=True, help="Path to validation data pickle file")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
+    parser.add_argument("-attn_implementation", "--attn_implementation", required=False, default='eager', help="Default implementation 'eager' is turned on by default. Note that: FlashAttention may not be supported on arm64/aarch64 platforms. Flash Attention helps faster inference and lower memory usage.")
 
     # DeepSpeed passthrough
     parser.add_argument("--deepspeed", default=None, help="Path to DeepSpeed config json (e.g., ds_zero2_bf16.json)")
@@ -265,7 +266,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.pretrain_model,
         torch_dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",  # keep if your env supports it
+        attn_implementation=args.attn_implementation,  # keep if your env supports it
         # trust_remote_code=True/False depending on your Qwen3 setup
     )
 
@@ -292,7 +293,6 @@ def main():
     <|start_header_id|>assistant<|end_header_id|>
     {% endif %}
     """
-    tokenizer.save_pretrained(tokenizer_out)
 
     # Load data
     with open(args.train_data, "rb") as f:
@@ -389,6 +389,8 @@ def main():
     try:
         trainer.train()
         trainer.save_model(model_out)
+        tokenizer.save_pretrained(model_out)
+
     except Exception as e:
         print(f"Error: {e}", flush=True)
         os.system("nvidia-smi")

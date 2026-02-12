@@ -1,5 +1,5 @@
 from peft import PeftModel
-from transformers import AutoProcessor, AutoModelForVision2Seq, AutoTokenizer
+from transformers import AutoProcessor, AutoModelForImageTextToText, AutoTokenizer
 import torch
 from PIL import Image
 SYSTEM_MESSAGE = (
@@ -21,7 +21,7 @@ USER_QUERY = (
 class LLaMA_Generator():
     def __init__(self, lora_ckpt, base_ckpt = 'meta-llama/Llama-3.2-11B-Vision-Instruct'):
         # 1️⃣ Load base model and processor
-        self.base_model = AutoModelForVision2Seq.from_pretrained(
+        self.base_model = AutoModelForImageTextToText.from_pretrained(
             base_ckpt,
             torch_dtype=torch.bfloat16,
             device_map="auto",

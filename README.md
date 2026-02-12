@@ -23,46 +23,41 @@ cd PhenoGPT2
 ```
 2. Install system/conda dependencies. 
 ```bash
-conda create -n phenogpt2 python=3.11
-conda activate phenogpt2
-conda install pandas numpy scikit-learn matplotlib seaborn requests
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-conda install -c "nvidia/label/cuda-12.8" cuda-toolkit
-conda install -c nvidia cuda-compiler
-conda install -c conda-forge jupyter
-conda install intel-openmp blas mpi4py
-conda install -c anaconda ipykernel
-conda install pytorch::faiss-cpu
-conda install -c conda-forge libstdcxx-ng libgcc-ng
-python -m ipykernel install --user --name=phenogpt2
-```
-3. Install PhenoGPT2 packages
-```bash
+conda env create -f environment.yml -y
+conda activate phenogpt2_user
+pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+conda install -c "nvidia/label/cuda-12.8" cuda-toolkit -y
 pip install --upgrade pip
-pip install -e .
+pip install -r requirements.txt 
 python -m spacy download en_core_web_sm
+python -m ipykernel install --user --name=phenogpt2_user ## this is needed if you want to run PhenoGPT2_Codebook.ipynb
 ```
-4. Install extra pip-only package
+3. Install Flash-Attention (optional if your system supports)
 ```bash
+## Flash-Attention helps faster inference and lower GPU memory but it is not supported in ARM-based systems.
 ## Make sure to load CUDA module properly before install flash-attn
 #module load CUDA/12.1.1 #try to pip install the following line first, if not module load cuda before it
-pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.7cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
+pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl
 ```
 ## Model Download
-- PhenoGPT2 is built upon LLaMA 3.1 8B model, so please apply for access first. [Apply here](https://www.llama.com/llama-downloads/)
+- PhenoGPT2 is built upon Qwen3 8B/Llama 3.1 8B model, so please apply for access first (for Llama).
 - **OPTIONAL** You can download the HPO Aware Pretrain first if you want to fine-tune on your extraction/normalization data or for LoRA variants.
 - Then, you can just download either PhenoGPT2-Short or PhenoGPT2-EHR (full parameters) for the inference.
 - If you plan to extract phenotypes from images, also download PhenoGPT2-Vision.
 - **ATTENTION**: PhenoGPT2 is in testing. To access the model weights, please contact us.
-- LLaVA-Med delivers the best performance, but its installation requires manual modifications to the original code, which can be complex. Please contact us if you wish to use the LLaVA-Med version. Otherwise, the fine-tuned LLaMA 3.2 11B Vision-Instruct offers seamless integration.
+- LLaVA-Med delivers the best performance, but its installation requires manual modifications to the original code, which can be complex. Please contact us if you wish to use the LLaVA-Med version. Otherwise, the fine-tuned Llama 3.2 11B Vision-Instruct offers seamless integration.
 
 Model Descriptions | Module | Base Model | 🤗 Huggingface Hub | 
 | --- | --- | --- | ---: |
-| HPO Aware Pretrain | Text | LLaMA 3.1 8B | [Not release yet]() |
-| PhenoGPT2-Short | Text | LLaMA 3.1 8B | [Not release yet]() |
-| PhenoGPT2-EHR (main) | Text | LLaMA 3.1 8B | [Not release yet]() |
-| PhenoGPT2-Vision | Vision | LLaVA-Med/LLaMA | [Not release yet]() |
-| PhenoGPT2-Vision (default) | Vision | LLaMA 3.2 11B Vision-Instruct | [Not release yet]() |
+| HPO Aware Pretrain | Text | Llama 3.1 8B| [Not release yet]() |
+| HPO Aware Pretrain | Text | Qwen3 8B| [Not release yet]() |
+| PhenoGPT2-Short | Text | Llama 3.1 8B | [Not release yet]() |
+| PhenoGPT2-Short | Text | Qwen3 8B | [Not release yet]() |
+| PhenoGPT2-EHR (main) | Text | Llama 3.1 8B | [Not release yet]() |
+| PhenoGPT2-EHR (main) | Text | Qwen3 8B | [Not release yet]() |
+| PhenoGPT2-Vision | Vision | LLaVA-Med/Llama | [Not release yet]() |
+| PhenoGPT2-Vision (default) | Vision | Qwen3-VL-30B-A3B-Instruct | [Not release yet]() |
+| PhenoGPT2-Vision | Vision | Llama 3.2 11B Vision-Instruct | [Not release yet]() |
 - If you plan to fine-tune or pretrain the models from scratch, make sure to download the original base model weights from [Meta](https://www.llama.com/llama-downloads/) and [LLava-Med](https://github.com/microsoft/LLaVA-Med) repos.
 - Save all models in the ./models
 ## Data Input Guide
@@ -142,26 +137,31 @@ Please note that the first run may take some time as it needs to load all the mo
 Please use the following command (along with your scheduler system (i.e SLURM)):
 ```
 bash run_inference.sh -i ./data/example/text_examples.json \
-         -o example_testing \
+         -o ./example_testing \
          -model_dir ./models/phenogpt2/ \
          -negation_model YOUR_QWEN_MODEL \
+         -attn_implementation flash_attention_2 \
+         -batch_size 64 \
          -index 0 \
          -negation \
+         -text_only \
          -wc 0"
 ```
 #### Required Arguments
 | Argument         | Description                                                                                                                   |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `-i`, `--input`  | **Required.** Path to your input data. Can be a `.json`, `.pkl`, or a folder containing `.txt` or image files.                |
-| `-o`, `--output` | **Required.** Output directory name. This is where results will be saved. The directory will be created if it does not exist. |
+| `-o`, `--output` | **Required.** Path to your output data. This is where results will be saved. The directory will be created if it does not exist. |
 #### Optional Arguments
 | Argument                    | Description                                                                                                         |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `-model_dir`, `--model_dir` | Path to the base model directory (e.g. a pretrained LLaVA or LLaMA3 model). If not provided, defaults will be used. |
 | `-lora`, `--lora`           | Enable this flag if your model is **LoRA-adapted**.                                                                   |
 | `-index`, `--index`         | Identifier string for saving outputs. Useful for tracking multiple runs.                                            |
+| `-batch_size`, `--batch_size`         | Default = 64. Decrease if you do not have enough GPU memory; otherwise, increase to run faster and more efficient.                                            |
 | `-negation`, `--negation`   | By default, **negation filtering is disabled**. Use this flag to **enable** it.                                     |
 | `-negation_model`, `--negation_model`   | By default, **negation model is Qwen/Qwen3-4B-Instruct-2507**. You can try other Qwen models if needed. We found Qwen is very useful in negation detection (with detailed prompt)                                     |
+| `--attn_implementation`             | 'eager' is used by default. Option: ['flash_attention_2', 'eager', 'spda']. Recommended using Flash Attention 2 as it helps faster inference and lower memory usage. Note: FlashAttention2 may not be supported on arm64/aarch64 platforms                                                  |
 | `--text_only`               | Use only the **text module** of the model, ignoring visual inputs.                                                  |
 | `--vision_only`             | Use only the **vision module**, ignoring text inputs.                                                               |
 | `-vision`, `--vision`       | Choose the vision model. Options: `llava-med` or `llama-vision` (default). It is used along with the text module; otherwise simply use --vision_only instead.                                          |
@@ -171,23 +171,24 @@ bash run_inference.sh -i ./data/example/text_examples.json \
 ## Pretraining & Fine-tuning
 You can reproduce PhenoGPT2 model with your own datasets or other foundation models. 
 > Text Module
-1. You need to pretrain your model on [synthetic data](./data/training_data/pretrain_data.pkl) compiled from HPO Database to obtain HPO Aware Pretrained Model.
-2. Then, fine-tune HPO Aware Pretrained Model on synthetic [train data](./data/training_data/training_ft_data.pkl) and [validation data](./data/training_data/val_ft_data.pkl) compiled from MIMIC-IV and PhenoPackets.
+1. You need to pretrain your model on synthetic data compiled from HPO Database to obtain HPO Aware Pretrained Model.
+2. Then, fine-tune HPO Aware Pretrained Model on synthetic train data and validation data compiled from MIMIC-IV and PhenoPackets.
+3. If you want to access the data, please send a message to the developers.
 > Vision Module
 1. If you want to fine-tune LLaVA-Med model, we recommend following the instructions in [LLaVA GitHub](https://github.com/haotian-liu/LLaVA), but change the weights to [LLaVA-Med](https://huggingface.co/microsoft/llava-med-v1.5-mistral-7b)
 2. Otherwise, you can use our [phenogpt2_vision_training.py](phenogpt2_vision_training.py) to fine-tune LLaMA Vision (or other similar architecture models).
 ## Developers
-Quan Minh Nguyen - Bioengineering PhD student at the University of Pennsylvania
+Quan Minh Nguyen - Bioengineering PhD student at the University of Pennsylvania (qmn103@seas.upenn.edu)
 
-Dr. Kai Wang - Professor of Pathology and Laboratory Medicine at the University of Pennsylvania and Children's Hospital of Philadelphia
+Dr. Kai Wang - Professor of Pathology and Laboratory Medicine at the University of Pennsylvania and Children's Hospital of Philadelphia (wangk@chop.edu)
 
 ## Citations
 The publication is preparing! We appreciate your reading! In the meantime, you can cite our Github if used.
 
-> @misc{nguyen2025phenogpt2,
+> @misc{nguyen2026phenogpt2,
   author       = {Quan Minh Nguyen and Kai Wang},
   title        = {PhenoGPT2},
-  year         = {2025},
+  year         = {2026},
   howpublished = {\url{https://github.com/WGLab/PhenoGPT2}},
-  note         = {Accessed: 2025-08-07}
+  note         = {Accessed: 2026-02-11}
 }

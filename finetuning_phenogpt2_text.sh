@@ -9,7 +9,8 @@ usage() {
 --pretrain_model <model_dir> \
 --train_data <train.pkl> \
 --val_data <val.pkl> \
---output_dir <output_dir>"
+--output_dir <output_dir> \
+--attn_implementation <attn_implementation>"
     exit 1
 }
 
@@ -22,6 +23,7 @@ while [[ "$#" -gt 0 ]]; do
         --train_data)     train_data="$2"; shift ;;
         --val_data)       val_data="$2"; shift ;;
         --output_dir)     output_dir="$2"; shift ;;
+        --attn_implementation)     attn_implementation="$2"; shift ;;
         *) echo "Unknown argument: $1"; usage ;;
     esac
     shift
@@ -86,6 +88,7 @@ echo "Train data: ${train_data}"
 echo "Val data: ${val_data:-NONE}"
 echo "Output dir: ${output_dir}"
 echo "DeepSpeed config: ${DS_CONFIG}"
+echo "attn_implementation: ${attn_implementation}"
 echo "========================================"
 
 ########################################
@@ -95,6 +98,7 @@ CMD="phenogpt2_training.py \
   --pretrain_model ${pretrain_model} \
   --train_data ${train_data} \
   --output_dir ${output_dir} \
+  --attn_implementation ${attn_implementation} \
   --deepspeed ${DS_CONFIG}"
 
 [[ -n "${val_data:-}" ]] && CMD="${CMD} --val_data ${val_data}"
@@ -119,7 +123,4 @@ deepspeed \
 
 echo "End time: $(date)"
 
-# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:8   --cpus-per-gpu=2   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   run_phenogpt_deepspeed.sh   --pretrain_model /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_8B_pretraining_010126/model   --train_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_train_synthetic_labels_qwen_8b.pkl   --val_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_val_synthetic_labels_qwen_8b.pkl   --output_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_ehr_8b_ft_updated
-# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:6   --cpus-per-gpu=2   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   run_phenogpt_deepspeed.sh   --pretrain_model /home/nguyenqm/projects/github/PhenoGPT2/hpo_aware_pretrain/model  --train_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_train_synthetic_labels_llama_8b.pkl   --val_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/updated_synthetic_data122525/combined_val_synthetic_labels_llama_8b.pkl   --output_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_llama_ehr_8b_ft_updated
-
-# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:8   --cpus-per-gpu=1   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   run_phenogpt_deepspeed.sh   --pretrain_model /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_8B_pretraining_010126/model   --train_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/phenotagger_data_20260131/combined_train_synthetic_labels_qwen_8b.pkl   --val_data /home/nguyenqm/projects/PhenoGPT2/new_synthetic_data/phenotagger_data_20260131/combined_val_synthetic_labels_qwen_8b.pkl   --output_dir /home/nguyenqm/projects/github/PhenoGPT2/phenogpt2_qwen3_ehr_8b_ft_nofilter
+# sbatch   -p gpu-xe9680q   --job-name=phenogpt2_qwen3_ft   --gres=gpu:h100:8   --cpus-per-gpu=2   --mem-per-cpu=50G   --time=5-00:00:00   --export=ALL   --mail-type=ALL   --mail-user=nguyenqm@chop.edu   finetuning_phenogpt2_text.sh   --pretrain_model HPO_AWARE_PRETRAIN_DIR   --train_data TRAIN_DATA_DIR   --val_data VAL_DATA_DIR    --output_dir OUTPUT_DIR --attn_implementation flash_attention_2

@@ -2,7 +2,7 @@ import os
 from datasets import load_dataset, Dataset
 import torch
 from tokenizers import AddedToken
-from transformers import AutoModelForVision2Seq,AutoTokenizer, AutoProcessor, BitsAndBytesConfig 
+from transformers import AutoModelForImageTextToText,AutoTokenizer, AutoProcessor, BitsAndBytesConfig 
 import numpy as np
 from peft import PeftModel, LoraConfig
 from transformers import DataCollatorForSeq2Seq
@@ -39,7 +39,7 @@ if args.model_dir:
     model_id = args.model_dir
 else:
     model_id = 'meta-llama/Llama-3.2-11B-Vision-Instruct'
-model = AutoModelForVision2Seq.from_pretrained(model_id,
+model = AutoModelForImageTextToText.from_pretrained(model_id,
     #quantization_config=quantization_config,
     torch_dtype=torch.bfloat16,
     device_map='auto')

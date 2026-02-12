@@ -32,6 +32,7 @@ LLaVA
 
 phenogpt2.egg-info
 
-/scripts/prompting_old.py
-/scripts/formatting_results2.py
 /scripts/clean_data*
+
+# 6. Training data (too large)
+data/training_data/*.pkl

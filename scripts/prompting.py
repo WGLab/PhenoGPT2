@@ -33,6 +33,30 @@ CRITICAL OUTPUT RULES
    - You may use "…" to shorten evidence, but must preserve defining values and descriptors.
    - If no relevant text exists, set evidence = null.
    - Do NOT invent or hallucinate evidence.
+5) DISEASE AND SYNDROME TERMS (IMPORTANT)
+
+Disease or syndrome names MAY represent valid phenotypes when they describe
+a pathological condition affecting the patient (e.g., cancer, neurocutaneous disease,
+neurodevelopmental disorder, structural disease).
+
+Examples of VALID phenotypes:
+- Neurofibromatosis
+- Basal cell carcinoma
+- Cardiomyopathy
+- Hyperparathyroidism
+- Epilepsy
+
+If the term refers to a pathological disease state affecting the patient, classify as:
+  type = "patient"
+  correct = true
+
+However, genetic diagnostic labels that only identify a named genetic condition
+without describing a pathological clinical abnormality should NOT be treated
+as phenotypes such as: Angelman syndrome, 22q11 deletion syndrome.
+
+If the term is used only as a genetic diagnosis label or administrative diagnosis without describing the abnormal clinical state itself, classify as:
+  type = "reference"
+  correct = false
 
 =====================
 MANDATORY DECISION ORDER (VERY IMPORTANT)
