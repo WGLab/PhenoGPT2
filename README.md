@@ -26,13 +26,13 @@ cd PhenoGPT2
 2. Install system/conda dependencies. 
 ```bash
 conda env create -f environment.yml -y
-conda activate phenogpt2_user2
+conda activate phenogpt2
 pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 conda install -c "nvidia/label/cuda-12.8" cuda-toolkit -y
 pip install --upgrade pip
 pip install -r requirements.txt 
 python -m spacy download en_core_web_sm
-python -m ipykernel install --user --name=phenogpt2_user2 ## this is needed if you want to run PhenoGPT2_Codebook.ipynb
+python -m ipykernel install --user --name=phenogpt2 ## this is needed if you want to run PhenoGPT2_Codebook.ipynb
 ```
 3. Install Flash-Attention (optional if your system supports)
 ```bash

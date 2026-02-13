@@ -1,4 +1,4 @@
-name: phenogpt2_user2
+name: phenogpt2
 channels:
   - nvidia
   - pytorch
