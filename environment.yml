@@ -1,4 +1,4 @@
-name: phenogpt2_user
+name: phenogpt2_user2
 channels:
   - nvidia
   - pytorch
@@ -12,4 +12,3 @@ dependencies:
   - libfabric
   - libgcc-ng
   - libstdcxx-ng
-prefix: /home/nguyenqm/miniconda3/envs/phenogpt2_user

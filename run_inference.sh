@@ -4,7 +4,7 @@
 
 # Show usage message
 usage() {
-    echo "Usage: $0 -i <input_file> -o <output_dir> [-model_dir <model_directory>] [-index <index>] [-negation_model <negation_model>] [-attn_implementation <attn_implementation>] [-batch_size <batch_size>] [-text_only] [-vision_only] [-vision <llava-med|llama-vision>] [-wc <word_count>] [-lora] [-negation]"
+    echo "Usage: $0 -i <input_file> -o <output_dir> [-model_dir <model_directory>] [-index <index>] [-negation_model <negation_model>] [-attn_implementation <attn_implementation>] [-batch_size <batch_size>] [-chunk_batch_size <chunk_batch_size>] [-text_only] [-vision_only] [-vision <llava-med|llama-vision>] [-wc <word_count>] [-lora] [-negation]"
     exit 1
 }
 
@@ -41,6 +41,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         -batch_size|--batch_size)
             batch_size="$2"
+            shift 2
+            ;;
+        -chunk_batch_size|--chunk_batch_size)
+            chunk_batch_size="$2"
             shift 2
             ;;
         -index|--index)
@@ -92,6 +96,7 @@ cmd="python inference.py -i \"$input\" -o \"$output\""
 [[ -n "$negation_model" ]] && cmd+=" -negation_model \"$negation_model\""
 [[ -n "$attn_implementation" ]] && cmd+=" -attn_implementation \"$attn_implementation\""
 [[ -n "$batch_size" ]] && cmd+=" -batch_size \"$batch_size\""
+[[ -n "$chunk_batch_size" ]] && cmd+=" -chunk_batch_size \"$chunk_batch_size\""
 [[ -n "$index" ]] && cmd+=" -index \"$index\""
 [[ -n "$vision" ]] && cmd+=" -vision \"$vision\""
 [[ "$wc" -gt 0 ]] && cmd+=" -wc $wc"
@@ -103,8 +108,8 @@ cmd="python inference.py -i \"$input\" -o \"$output\""
 # Show and execute
 echo "Executing: $cmd"
 eval $cmd
-# sbatch -p gpuq --gres=gpu:a100:1 --cpus-per-gpu=1 --mem-per-cpu=50G --profile=all \
+# sbatch -p gpuq --gres=gpu:a100:1 --cpus-per-gpu=2 --mem-per-cpu=50G --profile=all \
 # --time=5-00:00:00 --export=ALL \
 # --wrap="bash run_inference.sh -i NOTE_DIRECTORY \
 # -o OUTPUT_FOLDER_NAME -model_dir MODEL_DIRECTORY -negation_model NEGATION_MODEL \ 
-# -attn_implementation flash_attention_2  -batch_size 64 -index 0 -wc 0 -text_only -negation"
+# -attn_implementation flash_attention_2  -batch_size 7 -chunk_batch_size 7 -index 0 -wc 0 -text_only -negation"

@@ -161,22 +161,134 @@ def generate_output(model, tokenizer, data_point, device, max_new_tokens = 10000
     text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
     return text
+def generate_output_batch(
+    model,
+    tokenizer,
+    data_points,   # list of strings (same as your generate_output input)
+    device,
+    max_new_tokens=5000,
+    temperature=0.5,
+    top_p=0.8,
+    negation_detect=False
+):
+    """
+    Batched version of generate_output(). Returns list[str] aligned with data_points.
+    It preserves:
+      - chat template logic (llama vs qwen)
+      - terminators / eos handling
+      - bad_words_ids
+      - decoding only newly generated tokens (per sample)
+    """
+    if len(data_points) == 0:
+        return []
 
-def is_valid_hpo(s: str) -> bool:
-    return bool(pattern.match(s))
+    # --------------------------------------------------
+    # 1. Build prompt strings (one per sample)
+    # --------------------------------------------------
+    prompts = []
+
+    for dp in data_points:
+        if negation_detect:
+            messages = prompt_negation(dp)
+        else:
+            messages = generate_prompt(dp)
+
+        config = model.config
+        if config.model_type == "llama":
+            prompt = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+        else:
+            prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,  # critical for Qwen-3
+            )
+        prompts.append(prompt)
+
+    # --------------------------------------------------
+    # 2. Terminators + bad words (same as generate_output)
+    # --------------------------------------------------
+    config = model.config
+    if config.model_type == "llama":
+        terminators = [
+            tokenizer.eos_token_id,
+            tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        ]
+    else:
+        terminators = [tokenizer.eos_token_id]
+        if "<|eot_id|>" in tokenizer.get_vocab():
+            terminators.append(tokenizer.convert_tokens_to_ids("<|eot_id|>"))
+
+    blocked_strings = ["HP", "hp", "hP", "Hp"]
+    bad_words_ids = [tokenizer.encode(word, add_special_tokens=False) for word in blocked_strings]
+    bad_words_ids = [ids for ids in bad_words_ids if ids and len(ids) > 0]
+
+    # --------------------------------------------------
+    # 3. Tokenize as a batch (padding)
+    # --------------------------------------------------
+    inputs = tokenizer(
+        prompts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+    )
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+    # True per-sample input lengths (exclude padding)
+    # attention_mask is 1 for real tokens, 0 for pad
+    input_lens = inputs["attention_mask"].sum(dim=1).tolist()
+
+    # --------------------------------------------------
+    # 4. Generate (one GPU call)
+    # --------------------------------------------------
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=temperature > 0,
+            temperature=temperature,
+            top_p=top_p,
+            eos_token_id=terminators,
+            pad_token_id=tokenizer.eos_token_id,
+            use_cache=True,
+            bad_words_ids=bad_words_ids,
+        )
+
+    # --------------------------------------------------
+    # 5. Decode ONLY newly generated tokens per sample
+    # --------------------------------------------------
+    texts = []
+    for i in range(outputs.shape[0]):
+        gen_tokens = outputs[i, input_lens[i]:]
+        text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
+        texts.append(text)
+
+    return texts
+
 def merge_outputs(data):
     """
     This function is used to combine all results for one note if users decided to split the note into multiple chunks
     """
-    pattern = re.compile(r"^HP:\d{7}$")
     pheno_dict = {}
     filtered_pheno_dict = {}
+    valid_evidence_demographics_dict = {}
+    evidence_demographics_dict = {}
+    evidence_phenotypes_dict = {}
     demographics = {}
     check = 0
+    has_valid_chunk = False
+    last_error = None
     for index, (tid, data_dict) in enumerate(data.items()):
         if 'error_response' not in data_dict:
+            has_valid_chunk = True
             if index == check and (len(data_dict) > 0):
                 demographics = data_dict['demographics'] # most of demographics are in the first chunk
+                try:
+                    evidence_demographics_dict = data_dict['negation_analysis']['demographics']
+                except:
+                    pass
             if 'age' not in data_dict['demographics']:
                 data_dict['demographics']['age'] = 'unknown'
             if 'sex' not in data_dict['demographics']:
@@ -187,10 +299,22 @@ def merge_outputs(data):
                 data_dict['demographics']['ethnicity'] = 'unknown'
             if len(demographics) > 0 and isinstance(data_dict['demographics']['age'], str) and str(demographics['age']).lower() == 'unknown' and len(data_dict) > 0:
                 demographics['age'] = data_dict['demographics']['age']
+                try:
+                    evidence_demographics_dict['age'] = data_dict['negation_analysis']['demographics']['age']
+                except:
+                    pass
             if len(demographics) > 0 and isinstance(data_dict['demographics']['sex'], str) and demographics['sex'].lower() == 'unknown' and len(data_dict) > 0:
                 demographics['sex'] = data_dict['demographics']['sex']
+                try:
+                    evidence_demographics_dict['sex'] = data_dict['negation_analysis']['demographics']['sex']
+                except:
+                    pass
             if len(demographics) > 0 and isinstance(data_dict['demographics']['ethnicity'], str) and demographics['ethnicity'].lower() == 'unknown' and len(data_dict) > 0:
                 demographics['ethnicity'] = data_dict['demographics']['ethnicity']
+                try:
+                    evidence_demographics_dict['ethnicity'] = data_dict['negation_analysis']['demographics']['ethnicity']
+                except:
+                    pass
             try:
                 pheno_dict = {**pheno_dict, **data_dict['phenotypes']}
             except:
@@ -199,26 +323,40 @@ def merge_outputs(data):
                 filtered_pheno_dict = {**filtered_pheno_dict, **data_dict['filtered_phenotypes']}
             except:
                 pass
-        
+            try:
+                evidence_phenotypes_dict = {**evidence_phenotypes_dict, **data_dict['negation_analysis']['phenotypes']}
+            except: ## sometimes the negation analysis cannot be properly formatted/fixed. So, we simply drop them for easier processing.
+                pass
+            if (len(evidence_demographics_dict) == 0) and ('negation_analysis' in data_dict) and (isinstance(data_dict['negation_analysis'], dict)) and ('demographics' in data_dict['negation_analysis']):
+                evidence_demographics_dict = data_dict['negation_analysis']['demographics']
+        else:
+            last_error = data_dict['error_response']
+            
         if len(demographics) == 0:
             demographics = {'age':'unknown', 'sex': 'unknown', 'ethnicity': 'unknown'}
+        
+    
+    negation_dict = {'demographics': evidence_demographics_dict, 'phenotypes': evidence_phenotypes_dict}
+
     # deduplicating
     pheno_dict_copy = {} 
     check_phens = []
     for k,v in pheno_dict.items():
-        if 'HPO_ID' in v and v['HPO_ID'] not in check_phens:
+        if (isinstance(v, dict)) and ('HPO_ID' in v) and (v['HPO_ID'] not in check_phens):
             pheno_dict_copy[k] = v
             check_phens.append(v['HPO_ID'])
     filtered_pheno_dict_copy = {}
     check_phens = []
     for k,v in filtered_pheno_dict.items():
-        if 'HPO_ID' in v and v['HPO_ID'] not in check_phens:
+        if (isinstance(v, dict)) and ('HPO_ID' in v) and (v['HPO_ID'] not in check_phens):
             filtered_pheno_dict_copy[k] = v
             check_phens.append(v['HPO_ID'])
-    if 'error_response' not in data_dict:    
-        return {'demographics':demographics,'phenotypes':pheno_dict_copy, 'filtered_phenotypes':filtered_pheno_dict_copy}
+    if has_valid_chunk:    
+        return {'demographics':demographics,'phenotypes':pheno_dict_copy, 'filtered_phenotypes':filtered_pheno_dict_copy, 'negation_analysis': negation_dict}
     else:
-        return {'demographics':demographics,'phenotypes':pheno_dict_copy, 'filtered_phenotypes':filtered_pheno_dict_copy, 'error_response': data_dict}
+        return {'demographics':demographics,'phenotypes':pheno_dict_copy, 'filtered_phenotypes':filtered_pheno_dict_copy, 'negation_analysis': negation_dict, 'error_response': last_error}
+def count_tokens(text, tokenizer):
+    return len(tokenizer.encode(text, add_special_tokens=False))
 
 # def impute_missing_hpo(term):
 #     match, score = matcher.match(term)

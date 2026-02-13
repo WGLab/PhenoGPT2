@@ -27,10 +27,10 @@ CRITICAL OUTPUT RULES
    - If type != "patient" AND type != "patient_indirect" → correct MUST be false
 
 4) Evidence rules:
-   - Evidence must be a short verbatim phrase or sentence copied from the clinical note, ideally 'containing that extracted phenotypes'.
+   - Evidence must be a short verbatim phrase or sentence (less than 20 words) copied from the clinical note, ideally 'containing that extracted phenotypes'.
    - Evidence used to support a phenotype MUST explicitly describe the PATIENT.
    - Evidence must NOT be identical to the phenotype key alone.
-   - You may use "…" to shorten evidence, but must preserve defining values and descriptors.
+   - You may use three dots ("…") to shorten evidence, but must preserve defining values and descriptors.
    - If no relevant text exists, set evidence = null.
    - Do NOT invent or hallucinate evidence.
 5) DISEASE AND SYNDROME TERMS (IMPORTANT)

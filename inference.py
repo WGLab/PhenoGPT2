@@ -56,9 +56,8 @@ class PhenoGPT2Dataset(Dataset):
         return k, self.data_input[k]
 
 
-def _collate_single(batch):
-    # batch is a list of length 1 (batch_size=1)
-    return batch[0]
+def _collate(batch):
+    return batch
 
 
 def build_llm(args):
@@ -98,6 +97,9 @@ def build_llm(args):
 
     #Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast = True)
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
     model.eval()
 
     config = model.config
@@ -125,6 +127,9 @@ def build_llm(args):
 def build_negation(args):
     if args.negation:
         negation_tokenizer = AutoTokenizer.from_pretrained(args.negation_model, use_fast = True)
+        negation_tokenizer.padding_side = "left"
+        if negation_tokenizer.pad_token_id is None:
+            negation_tokenizer.pad_token = negation_tokenizer.eos_token
         negation_model = AutoModelForCausalLM.from_pretrained(
             args.negation_model,
             dtype=torch.bfloat16,
@@ -171,90 +176,160 @@ def build_vision(args, use_vision):
         #     raise ValueError(f"Unsupported vision model '{vision_model}'. Use 'llava-med' or 'llama-vision'.")
         return phenogpt2_vision
     return None
+def process_one_batch_text(
+    batch,
+    data_input,
+    model,
+    tokenizer,
+    bert_tokenizer,
+    bert_model,
+    negation,
+    negation_model,
+    negation_tokenizer,
+    emb_model,
+    wc,
+    chunk_batch_size=4
+):
+    """
+    Batch text pipeline with minimal logic changes:
+      - same chunking + BERT filtering
+      - same generate_output settings + retry settings
+      - same valid_json checks
+      - same negation behavior (but batched)
+      - same merge_outputs per patient
+    Returns dict: {index: {"text": ..., "image": {}}}
+    """
 
+    # temp per patient: para_id -> final_response
+    temp_per_patient = {index: {} for index, _ in batch}
 
-def process_one_item(index, dt, data_input, args, model, tokenizer, phenogpt2_vision,
-                     use_text, use_vision, bert_tokenizer, bert_model,
-                     negation, negation_model, negation_tokenizer, emb_model, wc):
-    all_responses = {}
-    all_responses[index] = {}
-
-    if use_text:
-        text = data_input[index]['clinical_note'].lower()
+    # Collect jobs: each is (index, para_id, chunk)
+    jobs = []
+    for index, dt in batch:
+        text = data_input[index]["clinical_note"].lower()
         if wc != 0:
-            all_chunks = chunking_documents(text, bert_tokenizer, bert_model, word_count = wc)
+            all_chunks = chunking_documents(text, bert_tokenizer, bert_model, word_count=wc)
         else:
+            chunk_batch_size = len(batch) ## each note is considered a chunk itself so use batch size instead
             all_chunks = [text]
-        temp_response = {}
+
         for para_id, chunk in enumerate(all_chunks):
-            chunk = chunk.replace("'", ""). replace('"', '')
+            chunk = chunk.replace("'", "").replace('"', "")
+
             if len(all_chunks) > 1:
-                pred_label = predict_label(bert_tokenizer, bert_model, {"text":chunk})
-            else: # in case users only want to use the whole note for testing
-                pred_label = 'INFORMATIVE'
-            if pred_label == 'INFORMATIVE':
-                # Try first attempt
-                response = generate_output(model, tokenizer, chunk, temperature = 0.3, max_new_tokens = 3000, device = device)
-                try:
-                    final_response, complete_check = valid_json(response)
-                    phenos = final_response.get("phenotypes", {})
-                    if not isinstance(phenos, dict) or len(phenos) == 0:
-                        raise ValueError("Empty or invalid phenotype dict")
-                except Exception:
-                    try:
-                        response = generate_output(model, tokenizer, chunk, temperature=0.4, max_new_tokens=5000, device = device)
-                        final_response, complete_check = valid_json(response)
-                        phenos = final_response.get("phenotypes", {})
-                        if not isinstance(phenos, dict) or len(phenos) == 0:
-                            raise ValueError("Empty or invalid phenotype dict after retry")
-                    except Exception as e:
-                        print(f"Error: {e}", flush = True)
-                        final_response = {'error_response': response}
-                        final_response['pid'] = data_input[index].get('pid', data_input[index].get('pmid', 'unknown'))
-                        temp_response[para_id] = final_response
-                        continue  # move to the next item
-                if negation:
-                    print('Starting detecting negation')
-                    try:
-                        negation_response = negation_detection(negation_model, negation_tokenizer, chunk, final_response, device = device, max_new_tokens = 10000)
-                        final_response = process_negation(final_response, negation_response, complete_check, emb_model)
-                    except:
-                        final_response['filtered_phenotypes'] = {}
-                else:
-                    final_response['filtered_phenotypes'] = {}
-                # if seen <= 10: ## You can comment this out for logging some early results
-                #     if len(final_response['filtered_phenotypes']) > 0:
-                #         print(final_response['filtered_phenotypes'], flush = True)
-                #         print(final_response['negation_analysis'], flush = True)
-                #     else:
-                #         print(final_response['negation_analysis'], flush = True)
-                temp_response[para_id] = final_response
-        if len(temp_response) > 1: # if splitting notes into multiple chunks, now merge all
-            all_responses[index]['text'] = merge_outputs(temp_response)
-        else:
-            temp_value = list(temp_response.values())
-            if len(temp_value) > 0:
-                all_responses[index]['text'] = temp_value[0] # use the whole note as input
+                pred_label = predict_label(bert_tokenizer, bert_model, {"text": chunk})
             else:
-                all_responses[index]['text'] = {}
-    else:
-        all_responses[index]['text'] = {}
+                pred_label = "INFORMATIVE"
 
-    if use_vision:
-        vision_phenotypes = phenogpt2_vision.generate_descriptions(dt['image'])
-        phen2hpo = generate_output(model, tokenizer, vision_phenotypes, temperature = 0.4, max_new_tokens = 1024, device = device)
-        phen2hpo = "{'demographics': {'age': '" + phen2hpo
-        phen2hpo = valid_json(phen2hpo)
-        phen2hpo = phen2hpo.get("phenotypes", {})
+            if pred_label == "INFORMATIVE":
+                jobs.append((index, para_id, chunk))
+
+    # --- First batched generation ---
+    prompts1 = [chunk for (_, _, chunk) in jobs]
+    outs1 = []
+    for i in range(0, len(jobs), chunk_batch_size):
+        sub_jobs = jobs[i:i+chunk_batch_size]
+        prompts = [chunk for (_,_,chunk) in sub_jobs]
+        outs = generate_output_batch(
+            model, tokenizer, prompts,
+            temperature=0.3,
+            max_new_tokens=3000,
+            device=device
+        )
+        outs1.extend(outs)
+    retry_jobs = []
+    ok_records = []  # (index, para_id, chunk, final_response, complete_check)
+
+    for (index, para_id, chunk), response in zip(jobs, outs1):
         try:
-            phen2hpo = {phen:hpo_dict['HPO_ID'] for phen,hpo_dict in phen2hpo.items()}
-        except:
-            phen2hpo = {}
-        all_responses[index]['image'] = phen2hpo
-    else:
-        all_responses[index]['image'] = {}
+            final_response, complete_check = valid_json(response)
+            phenos = final_response.get("phenotypes", {})
+            if not isinstance(phenos, dict) or len(phenos) == 0:
+                raise ValueError("Empty or invalid phenotype dict. Retry!")
+            ok_records.append((index, para_id, chunk, final_response, complete_check))
+        except Exception:
+            retry_jobs.append((index, para_id, chunk))
 
-    return all_responses[index]
+    # --- Retry batched generation (only failures) ---
+    if len(retry_jobs) > 0:
+        prompts2 = [chunk for (_, _, chunk) in retry_jobs]
+        outs2 = []
+        for i in range(0, len(retry_jobs), chunk_batch_size):
+            sub_jobs = retry_jobs[i:i+chunk_batch_size]
+            prompts = [chunk for (_,_,chunk) in sub_jobs]
+            outs = generate_output_batch(
+                model, tokenizer, prompts,
+                temperature=0.4,
+                max_new_tokens=4000,
+                device=device
+            )
+            outs2.extend(outs)
+        for (index, para_id, chunk), response in zip(retry_jobs, outs2):
+            try:
+                final_response, complete_check = valid_json(response)
+                phenos = final_response.get("phenotypes", {})
+                if not isinstance(phenos, dict) or len(phenos) == 0:
+                    raise ValueError("Empty or invalid phenotype dict after retry. No retry!")
+                ok_records.append((index, para_id, chunk, final_response, complete_check))
+            except Exception as e:
+                final_response = {"error_response": response}
+                final_response["pid"] = data_input[index].get("pid", data_input[index].get("pmid", "unknown"))
+                temp_per_patient[index][para_id] = final_response
+
+    # Put successful generations into temp_per_patient (but don’t negation yet)
+    # Also collect for batched negation
+    neg_chunks = []
+    neg_points = []
+    neg_keys = []  # (index, para_id, complete_check)
+
+    for index, para_id, chunk, final_response, complete_check in ok_records:
+        if negation:
+            neg_chunks.append(chunk)
+            neg_points.append(final_response)
+            neg_keys.append((index, para_id, complete_check))
+        else:
+            final_response["filtered_phenotypes"] = {}
+            temp_per_patient[index][para_id] = final_response
+
+    # --- Batched negation ---
+    if negation and len(neg_points) > 0:
+        neg_texts = []
+        for i in range(0, len(neg_points), chunk_batch_size):
+            sub_chunks = neg_chunks[i:i+chunk_batch_size]
+            sub_points = neg_points[i:i+chunk_batch_size]
+            outs = negation_detection_batch(
+                negation_model,
+                negation_tokenizer,
+                sub_chunks,
+                sub_points,
+                device=device,
+                max_new_tokens=5000
+            )
+            neg_texts.extend(outs)
+
+        for (index, para_id, complete_check), final_response, neg_text in zip(neg_keys, neg_points, neg_texts):
+            try:
+                negation_response = neg_text
+                final_response = process_negation(final_response, negation_response, complete_check, emb_model)
+            except:
+                final_response["filtered_phenotypes"] = {}
+                final_response["negation_analysis"] = {}
+            temp_per_patient[index][para_id] = final_response
+
+    # --- Merge per patient exactly as before ---
+    batch_results = {}
+    for index, _ in batch:
+        if len(temp_per_patient[index]) > 1:
+            text_out = merge_outputs(temp_per_patient[index])
+        else:
+            temp_value = list(temp_per_patient[index].values())
+            if len(temp_value) > 0:
+                text_out = temp_value[0]
+            else:
+                text_out = {}
+        batch_results[index] = {"text": text_out, "image": {}}
+
+    return batch_results
 
 
 def main():
@@ -264,7 +339,8 @@ def main():
     parser.add_argument("-model_dir", "--model_dir", help="Model directory path")
     parser.add_argument("-lora", "--lora", action="store_true", help="Use LoRA model")
     parser.add_argument("-index", "--index", type=int, help="Index identifier for saving")
-    parser.add_argument("-batch_size", "--batch_size", default=64, type=int, help="How many samples are proccesed at the same time")
+    parser.add_argument("-batch_size", "--batch_size", default=7, type=int, help="How many samples are proccesed at the same time")
+    parser.add_argument("-chunk_batch_size", "--chunk_batch_size", default=7, type=int, help="Number of chunks processed on GPU at once. This is ignored if wc=0")
     parser.add_argument("-negation", "--negation", action="store_true", help="Allow negation filtering")
     parser.add_argument("-negation_model", "--negation_model", required=False, default='Qwen/Qwen3-4B-Instruct-2507', help="Define the negation model")
     parser.add_argument("-attn_implementation", "--attn_implementation", required=False, default='eager', help="Default implementation 'eager' is turned on by default. Note that: FlashAttention may not be supported on arm64/aarch64 platforms. Flash Attention helps faster inference and lower memory usage.")
@@ -311,43 +387,65 @@ def main():
     # ----------------------------
     # DataLoader wrapper (prefetch)
     # ----------------------------
+    allocated_cpus = os.cpu_count() or 1
+    num_workers = max(1, min(allocated_cpus - 1, 4))
     dataset = PhenoGPT2Dataset(data_input)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=min(8, max(0, (os.cpu_count() or 4) - 1)),
+        num_workers=num_workers,
         pin_memory=True,
         persistent_workers=True if (os.cpu_count() or 0) > 1 else False,
-        collate_fn=_collate_single,
+        collate_fn=_collate,
         prefetch_factor=4 if (os.cpu_count() or 0) > 1 else None,
     )
 
     seen=0
-    for index, dt in tqdm(loader):
-        all_responses[index] = {}
-        result = process_one_item(
-            index=index,
-            dt=dt,
-            data_input=data_input,
-            args=args,
-            model=model,
-            tokenizer=tokenizer,
-            phenogpt2_vision=phenogpt2_vision,
-            use_text=use_text,
-            use_vision=use_vision,
-            bert_tokenizer=bert_tokenizer,
-            bert_model=bert_model,
-            negation=negation,
-            negation_model=negation_model,
-            negation_tokenizer=negation_tokenizer,
-            emb_model=emb_model,
-            wc=wc
-        )
-        all_responses[index] = result
-    #     if seen <= 10:
-    #         print(all_responses[index], flush=True)
-        seen += 1
+    for batch in tqdm(loader, desc='Running Batch'):
+        # --- TEXT (batched GPU) ---
+        if use_text:
+            batch_text_results = process_one_batch_text(
+                batch=batch,
+                data_input=data_input,
+                model=model,
+                tokenizer=tokenizer,
+                bert_tokenizer=bert_tokenizer,
+                bert_model=bert_model,
+                negation=negation,
+                negation_model=negation_model,
+                negation_tokenizer=negation_tokenizer,
+                emb_model=emb_model,
+                wc=wc,
+                chunk_batch_size=args.chunk_batch_size
+            )
+        else:
+            batch_text_results = {index: {"text": {}, "image": {}} for index, _ in batch}
+
+        # --- VISION ---
+        if use_vision:
+            for index, dt in batch:
+                vision_phenotypes = phenogpt2_vision.generate_descriptions(dt['image'])
+                phen2hpo = generate_output(model, tokenizer, vision_phenotypes, temperature=0.4, max_new_tokens=1024, device=device)
+                phen2hpo = "{'demographics': {'age': '" + phen2hpo
+                phen2hpo = valid_json(phen2hpo)
+                phen2hpo = phen2hpo.get("phenotypes", {})
+                try:
+                    phen2hpo = {phen: hpo_dict['HPO_ID'] for phen, hpo_dict in phen2hpo.items()}
+                except:
+                    phen2hpo = {}
+                batch_text_results[index]["image"] = phen2hpo
+        else:
+            for index, dt in batch:
+                batch_text_results[index]["image"] = {}
+
+        # --- commit results per patient index ---
+        for index, _ in batch:
+            all_responses[index] = batch_text_results[index]
+
+            if seen <= 10:
+                print(all_responses[index], flush=True)
+            seen += 1
 
     with open(f'{out_path}', 'wb') as f:
         pickle.dump(all_responses, f)

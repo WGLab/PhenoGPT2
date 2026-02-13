@@ -3,7 +3,7 @@
 #from medspacy.ner import TargetRule
 #from spacy.tokens import Doc
 from ast import literal_eval
-from .utils import generate_output
+from .utils import generate_output, generate_output_batch
 from .formatting_results import *
 from rapidfuzz import process, fuzz
 import ast
@@ -233,3 +233,29 @@ def negation_detection(model, tokenizer, chunk, data_point, device, max_new_toke
     data_point['clinical_note'] = chunk.lower()
     negation_response = generate_output(model, tokenizer, data_point, temperature = 0.4, negation_detect = True, max_new_tokens = max_new_tokens, device = device)
     return negation_response
+def negation_detection_batch(model, tokenizer, chunks, data_points, device, max_new_tokens=5000):
+    """
+    Batched negation detection.
+    chunks: list[str] (the chunk text)
+    data_points: list[dict] (final_response dict per chunk)
+    Returns list[str] aligned with inputs.
+    """
+    # Build data_points_for_negation list of dicts (same logic as negation_detection)
+    batched_inputs = []
+    for chunk, dp in zip(chunks, data_points):
+        dp2 = dp.copy()
+        dp2["clinical_note"] = chunk.lower()
+        batched_inputs.append(dp2)
+
+    # generate_output_batch expects list of "data_point" like your generate_output input
+    # but your prompt_negation(data_point) expects the dict (dp2), so pass dp2 list
+    neg_texts = generate_output_batch(
+        model,
+        tokenizer,
+        batched_inputs,
+        temperature=0.3,
+        negation_detect=True,
+        max_new_tokens=max_new_tokens,
+        device=device,
+    )
+    return neg_texts
