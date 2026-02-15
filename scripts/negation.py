@@ -212,12 +212,18 @@ def process_negation(output_ans, negation_response, complete, emb_model):
             neg_in_key = contains_negation(matched_key_lower, negation_check)
 
             # ---- lab special rule ----
-            check_lab = phenotypes_check[matched_key].get('type', None)
-            if check_lab:
+            type_str = phenotypes_check[matched_key].get('type', None)
+            if type_str:
                 if (has_digit_or_period(evidence_text) or has_digit_or_period(matched_key)):
-                    if check_lab == 'lab' and ('*' in evidence_text):
+                    if type_str == 'lab' and ('*' in evidence_text):
                         temp_dict['filtered_phenotypes'][p] = phenotypes[p]
                         continue
+                if (
+                    correct_check
+                    and (not neg_in_key) and (type_str in ['patient', 'patient_indirect', 'lab', 'imaging'])
+                ):
+                    temp_dict['filtered_phenotypes'][p] = phenotypes[p]
+                    continue
             if (
                 correct_check
                 and not neg_in_key
