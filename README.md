@@ -44,10 +44,10 @@ python -m ipykernel install --user --name=phenogpt2 ## this is needed if you wan
 ## Make sure to load CUDA module properly before install flash-attn
 #module load CUDA/12.1.1 #try to pip install the following line first, if not module load cuda before it
 pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_aarch64.whl # for cuda 13 torch 2.10 python 3.11
+```
 
 4. We recommend using 1 80-GB GPU or 2 40-GB GPUs for running this tool smoothly. If OOM happens, consider to either use smaller foundation model for negation OR adjust the gpu_memory_utilization for each model appropriately. Please see the GitHub issue 13 for some common issues.
 
-```
 ## Model Download 📥
 - PhenoGPT2 is built upon Qwen3 8B/Llama 3.1 8B model, so please apply for access first (for Llama). 
 - **⚡⚡Qwen3-based PhenoGPT2 performs the best.🏆🏆**
