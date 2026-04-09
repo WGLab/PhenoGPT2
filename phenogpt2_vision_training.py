@@ -1,296 +1,394 @@
 import os
-from datasets import load_dataset, Dataset
-import torch
-from tokenizers import AddedToken
-from transformers import AutoModelForImageTextToText,AutoTokenizer, AutoProcessor, BitsAndBytesConfig 
-import numpy as np
-from peft import PeftModel, LoraConfig
-from transformers import DataCollatorForSeq2Seq
-import gc, json, pickle, itertools, argparse
-from sklearn.model_selection import train_test_split
-from tqdm.auto import tqdm
-from datetime import datetime
-import base64, re
-from io import BytesIO
-from PIL import Image
-from trl import SFTConfig, SFTTrainer
-import pandas as pd
+import gc
+import pickle, json
 import random
-from pathlib import Path
-from typing import List, Dict
+import argparse
+from typing import List, Dict, Any
 
-from PIL import Image, ImageOps, ImageEnhance, ImageFilter
-import torchvision.transforms as T
-import torchvision.transforms.functional as F
+from PIL import Image, ImageEnhance, ImageFilter
+import torch
+from torch.utils.data import Dataset
+
+from transformers import (
+    AutoProcessor,
+    AutoModelForImageTextToText,
+    BitsAndBytesConfig,
+    set_seed,
+)
+from peft import LoraConfig
+from trl import SFTConfig, SFTTrainer
+from datasets import load_from_disk
+
+
 gc.collect()
-torch.cuda.empty_cache()
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:2048"
-device = "cuda" if torch.cuda.is_available() else "cpu"
-parser = argparse.ArgumentParser(description="PhenoGPT2 Image Recognizer",
-                                 formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-parser.add_argument("-train_data", "--train_data", required = True, help="directory to training dataset")
-parser.add_argument("-eval_data", "--eval_data", required = True, help="directory to evaluation dataset")
-parser.add_argument("-name", "--name", required = True, help="directory to output folder")
-parser.add_argument("-styles", "--styles", required = False, action="store_true", help="Adding multiple styles to an image")
-parser.add_argument("-lora", "--lora", required = False, action="store_true", help="LoRA finetuning")
-parser.add_argument("-model_dir", "--model_dir", required = False, help="Directory to the Vision Foundation Model")
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+
+
+# ---------------------------------------------------------
+# Prompts
+# ---------------------------------------------------------
+SYSTEM_PROMPT = """You are a medical AI assistant specialized in dysmorphology and phenotype extraction from clinical facial photographs.
+
+Your task is to analyze a single patient image and extract only directly observable phenotypic findings.
+
+Rules:
+- Mention only visible phenotypes.
+- Do not infer diseases, syndromes, genes, mechanisms, ethnicity, age, or history unless directly visible and clinically obvious from the image.
+- Do not speculate.
+- Use concise phenotype phrases that are easy to normalize to Human Phenotype Ontology (HPO).
+- Avoid explanations, reasoning, confidence statements, or extra prose.
+- If the image quality is poor, still extract only the findings that are reasonably visible.
+- If no clear phenotype can be reliably identified, output exactly: No clearly observable phenotype"""
+
+USER_PROMPT = """Analyze the attached patient image and return only the observable phenotype list.
+
+Output format:
+Phenotype A || Phenotype B || Phenotype C
+
+Strict requirements:
+- Output only phenotype phrases separated by ' || '.
+- No bullet points.
+- No numbering.
+- No diagnosis.
+- No explanation.
+- No extra text."""
+
+# with open('/home/nguyenqm/projects/collaboration/aaron/mai/visual_hpo_terms.json', 'r') as f:
+#     visual_hpos = json.load(f)
+# ---------------------------------------------------------
+# Parser
+# ---------------------------------------------------------
+parser = argparse.ArgumentParser()
+parser.add_argument("-train_data", "--train_data", required=True)
+parser.add_argument("-eval_data", "--eval_data", required=True)
+parser.add_argument("-model", "--model", default="Qwen/Qwen3-VL-8B-Instruct")
+parser.add_argument("-name", "--name", required=True)
+parser.add_argument("-styles", "--styles", action="store_true")
+parser.add_argument("-lora", "--lora", action="store_true")
 args = parser.parse_args()
-if args.model_dir:
-    model_id = args.model_dir
-else:
-    model_id = 'meta-llama/Llama-3.2-11B-Vision-Instruct'
-model = AutoModelForImageTextToText.from_pretrained(model_id,
-    #quantization_config=quantization_config,
-    torch_dtype=torch.bfloat16,
-    device_map='auto')
-processor = AutoProcessor.from_pretrained(model_id)
-if processor.tokenizer.pad_token is None:
-    processor.tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-processor.tokenizer.padding_side = "left"
-model.language_model.resize_token_embeddings(len(processor.tokenizer)) ## go along with tokenizer.pad_token is None
-model.config.pad_token_id = processor.tokenizer.pad_token_id
-def get_last_checkpoint(output_dir):
-    checkpoints = [os.path.join(output_dir, d) for d in os.listdir(output_dir) if d.startswith("checkpoint-")]
-    if not checkpoints:
-        return None
-    return max(checkpoints, key=lambda x: int(x.split("-")[-1]))
-# ---------- reusable deterministic “base” preprocess --------------------------
-# • keeps anatomy untouched
-# • converts every file to RGB + a unified canvas size
-#   (112×112 for your key data; bump to 224 if your backbone needs it)
-
-def base_preprocess(img: Image.Image, target_size: int = 112) -> Image.Image:
-    img = img.convert("RGB")
-    # Make the smallest edge = target_size while keeping aspect ratio
-    img.thumbnail((target_size, target_size), Image.Resampling.BICUBIC)
-    # Put it on a square canvas so rotations don’t clip
-    new_img = Image.new("RGB", (target_size, target_size), (0, 0, 0))
-    left = (target_size - img.width) // 2
-    top  = (target_size - img.height) // 2
-    new_img.paste(img, (left, top))
-    return new_img
 
 
-# ---------- light‑weight augmentations that respect dysmorphology -------------
-# We package each style into its own callable transform for reproducibility.
+DEFAULTS = {
+    "rotation_deg": 20.0,
+    "brightness_jitter": 0.06,
+    "contrast_jitter": 0.06,
+    "color_jitter": 0.03,
+    "blur_prob": 0.08,
+    "max_len": 1500,
+    "lora_r": 64,
+    "lora_alpha": 128,
+    "lora_dropout": 0.05,
+    "lora_target_modules": [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj"
+    ],
+}
+def load_image(path):
+    return Image.open(path).convert("RGB")
 
-def style_identity(img):
-    return img  # original (always include)
 
-def style_rot(img):
-    # ±45° keeps landmarks visible
-    angle = random.uniform(-45, 45)
-    return img.rotate(angle, resample=Image.Resampling.BICUBIC, fillcolor=(0, 0, 0))
-
-def style_hflip(img):
-    # Beware of laterality! Use only if you have symmetrical phenotypes
-    return ImageOps.mirror(img)
-
-def style_color(img):
-    # mild brightness / contrast / saturation jitter
-    enhancer = ImageEnhance.Brightness(img)
-    img = enhancer.enhance(random.uniform(0.85, 1.15))
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(random.uniform(0.85, 1.15))
-    enhancer = ImageEnhance.Color(img)
-    img = enhancer.enhance(random.uniform(0.85, 1.15))
+def conservative_augment(img):
+    img = img.rotate(random.uniform(-DEFAULTS["rotation_deg"], DEFAULTS["rotation_deg"]))
+    img = ImageEnhance.Brightness(img).enhance(random.uniform(0.94, 1.06))
+    img = ImageEnhance.Contrast(img).enhance(random.uniform(0.94, 1.06))
+    img = ImageEnhance.Color(img).enhance(random.uniform(0.97, 1.03))
+    if random.random() < DEFAULTS["blur_prob"]:
+        img = img.filter(ImageFilter.GaussianBlur(radius=0.5))
     return img
 
-def style_noise(img):
-    # subtle Gaussian blur + noise ( robustness to compression / focus )
-    img = img.filter(ImageFilter.GaussianBlur(radius=1))
-    noise = Image.effect_noise(img.size, random.randint(2,5))
-    return Image.blend(img, noise.convert("RGB"), alpha=0.15)
 
-STYLE_BANK = [style_identity, style_rot, style_hflip,
-              style_color, style_noise]   # add / remove as you wish
+def build_messages(text, model_family):
+    # QWEN (UNCHANGED)
+    if model_family == "qwen":
+        return [
+            {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
+            {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": USER_PROMPT}]},
+            {"role": "assistant", "content": [{"type": "text", "text": text}]},
+        ]
 
+    # LLAMA (MINIMAL CHANGE)
+    elif model_family == "llama":
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": [
+                {"type": "image"},
+                {"type": "text", "text": USER_PROMPT}
+            ]},
+            {"role": "assistant", "content": text},
+        ]
 
-# ---------- glue: make N variants from one corpus entry -----------------------
-
-def generate_style_variants(sample: Dict, styles: bool) -> List[Dict]:
-    """
-    Args
-    ----
-    sample : one element of your corpus (contains 'img_path', 'output', etc.)
-    n_styles : how many *additional* styles to generate (original is always kept)
-
-    Returns
-    -------
-    List[Dict]  (length = n_styles + 1)  each ready for Llama‑3 Vision
-    """
-
-    def _wrap(pil_img, text_out):
-        return {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image"},
-                        {"type": "text",
-                         "text": SYSTEM_MESSAGE + "\n" + USER_QUERY},
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": text_out}],
-                },
-            ],
-            "image": pil_img,
-        }
-
-    SYSTEM_MESSAGE = (
-        "You are a medical AI assistant with expertise in medical genetics, "
-        "dysmorphology, and image-based phenotype recognition. Your task is to "
-        "analyze facial and neck images to identify any observable phenotypes "
-        "related to known human diseases. These phenotypes can include "
-        "abnormalities in morphology, development, skin, face, hair, eyes, ears, "
-        "nose, mouth, or neck. You must use the Human Phenotype Ontology (HPO) "
-        "to normalize all detected phenotypes."
-    )
-    USER_QUERY = (
-        "Analyze the attached facial image. "
-        "Output only observable characteristics without implying any underlying "
-        "cause, disease, or mechanism. All phenotypes should be separated by ||. "
-        "Please do not provide any additional texts or formatting. "
-        "The response should be like this: Phenotype A || Phenotype B || Phenotype C"
-    )
-
-    base_img = base_preprocess(Image.open(sample["img_path"]))
-    variants = []
-    if styles:
-        transforms = STYLE_BANK.copy()
+    # fallback
     else:
-        transforms = STYLE_BANK[0]
-    for t in STYLE_BANK:
-        img_variant = t(base_img.copy())          # don’t mutate base
-        variants.append(_wrap(img_variant, sample["output"]))
+        return [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": USER_PROMPT},
+            {"role": "assistant", "content": text},
+        ]
+def generate_style_variants(sample, styles):
+    image_path = sample["image_path"]
+    text = sample["output"]
 
+    variants = [{"image_path": image_path, "answer_text": text, "use_aug": False}]
+    if styles:
+        for _ in range(2):
+            variants.append({"image_path": image_path, "answer_text": text, "use_aug": True})
     return variants
 
-def collate_fn(examples):
-    # Get the texts and images, and apply the chat template
-    texts = [processor.apply_chat_template(e["messages"], tokenize=False) for e in examples]
-    images = [[e["image"]] for e in examples]
 
-    # Tokenize the texts and process the images
-    batch = processor(text=texts, images=images, return_tensors="pt", padding=True)
-    #batch = processor(text=texts, return_tensors="pt", padding=True)
-    #batch = {k:v.to(device) for k,v in batch.items()}
-    # The labels are the input_ids, and we mask the padding tokens in the loss computation
-    labels = batch["input_ids"].clone()
-    labels[labels == processor.tokenizer.pad_token_id] = -100
-    image_token_id = processor.tokenizer.convert_tokens_to_ids(processor.image_token)
-    labels[labels == image_token_id] = -100
+def load_pickle(path):
+    return pickle.load(open(path, "rb"))
 
-    batch["labels"] = labels
-    
-    return batch
-def defining_args():
-    return """
-    meta-llama/Llama-3.2-11B-Vision-Instruct
-    Pretraining on the HPO database
-    Randomly initialize embeddings for new HPO tokens
-    3 epochs
-    """
 
-def main():
-    with open(args.train_data, 'rb') as f:
-        train_input = pickle.load(f)
-    with open(args.eval_data, 'rb') as f:
-        eval_input = pickle.load(f)
-    train_data = list(itertools.chain.from_iterable([generate_style_variants(t, args.styles) for t in train_input]))
-    random.shuffle(train_data)
-    eval_data = list(itertools.chain.from_iterable([generate_style_variants(t, args.styles) for t in eval_input]))
-    random.shuffle(eval_data)    
-    c = datetime.now()
-    out_dir = os.getcwd() + f'./models/phenogpt2_L323BVision_{args.name}'
-    os.makedirs(out_dir, exist_ok=True)
-    out_dir_model = os.path.join(out_dir, 'model')
-    os.makedirs(out_dir_model, exist_ok=True)
-    with open(out_dir + '/params.txt', 'w') as f:
-        f.write(defining_args())
-    training_args = SFTConfig(
-        output_dir=out_dir,
-        num_train_epochs=5,
-        per_device_train_batch_size=8,  # Reduce batch size to 2
-        per_device_eval_batch_size=8,
-        gradient_accumulation_steps=8,  # Increase gradient accumulation steps
-        gradient_checkpointing=True,
-        dataloader_pin_memory=False,
-        optim="adamw_torch_fused",
-        learning_rate=2e-4,
-        lr_scheduler_type="constant",
-        logging_steps=500,
-        do_eval=True, ### SET this for pretraining
-        eval_steps=200,
-        eval_strategy="steps",
-        save_strategy="steps",
-        save_steps=600,
-        save_total_limit=2,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        load_best_model_at_end=True,
-        bf16=True,
-        tf32=True,
-        max_grad_norm=0.3,
-        warmup_ratio=0.03,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
-        dataset_text_field="",
-        dataset_kwargs={"skip_prepare_dataset": True},
-        max_seq_length=5000
+def is_arrow_dataset(path):
+    return os.path.isdir(path)
+
+
+def load_arrow_as_legacy(path, data_type='train'):
+    ds = load_from_disk(path)[data_type]
+    converted = []
+
+    for row in ds:
+        img = row["image_restored"]
+        tmp_path = f"/tmp/arrow_{random.randint(0, 1_000_000_000_000)}.png"
+
+        if isinstance(img, Image.Image):
+            img.save(tmp_path)
+        else:
+            Image.fromarray(img).save(tmp_path)
+
+        hpo = row["hpo_terms"]
+        if not hpo:
+            text = "No phenotype detected"
+        else:
+            text = " | ".join([str(x).lower() for x in hpo])
+
+        converted.append({
+            "image_path": tmp_path,
+            "output": text
+        })
+
+    return converted
+
+
+class PhenotypeDataset(Dataset):
+    def __init__(self, items, model_family):
+        self.items = items
+        self.model_family = model_family
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, idx):
+        item = self.items[idx]
+        img = load_image(item["image_path"])
+
+        if item.get("use_aug", False):
+            img = conservative_augment(img)
+
+        return {
+            "messages": build_messages(item["answer_text"], self.model_family),
+            "image": img
+        }
+
+def collate_fn(processor, model_family):
+    def fn(batch: List[Dict[str, Any]]):
+        full_texts = [
+            processor.apply_chat_template(
+                ex["messages"],
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+            for ex in batch
+        ]
+
+        prompt_texts = [
+            processor.apply_chat_template(
+                ex["messages"][:-1],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            for ex in batch
+        ]
+
+        if model_family == "llama":
+            images = [[ex["image"]] for ex in batch]  # 🔥 nested list
+        else:
+            images = [ex["image"] for ex in batch]   # keep qwen unchanged
+
+        enc = processor(
+            text=full_texts,
+            images=images,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=DEFAULTS["max_len"],
+        )
+
+        input_ids = enc["input_ids"]
+        pad_id = processor.tokenizer.pad_token_id
+
+        prompt_ids = processor.tokenizer(
+            prompt_texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=DEFAULTS["max_len"],
+            add_special_tokens=False,
+        )["input_ids"]
+
+        prompt_lens = (prompt_ids != pad_id).sum(dim=1)
+
+        labels = input_ids.clone()
+        bs, seqlen = labels.shape
+
+        for i in range(bs):
+            pl = int(prompt_lens[i].item())
+            pl = min(pl, seqlen)
+            labels[i, :pl] = -100
+
+        labels[labels == pad_id] = -100
+        enc["labels"] = labels
+        return enc
+
+    return fn
+
+
+def load_model():
+    quant = BitsAndBytesConfig(load_in_8bit=True) if args.lora else None
+    distributed = int(os.environ.get("WORLD_SIZE", "1")) > 1
+    print(f"DISTRIBUTED MODE: {distributed}")
+    model_kwargs = dict(
+        torch_dtype=torch.bfloat16,
+        quantization_config=quant,
+        trust_remote_code=False,
+        attn_implementation="sdpa" if "llama" in args.model.lower() else "flash_attention_2"
     )
 
+    # if distributed:
+    #     model = AutoModelForImageTextToText.from_pretrained(
+    #         args.model,
+    #         **model_kwargs,
+    #     )
+    # else:
+    model = AutoModelForImageTextToText.from_pretrained(
+        args.model,
+        device_map="auto" if not args.lora else None,
+        **model_kwargs,
+    )
 
-    training_args.remove_unused_columns = False
-    training_args.dataset_kwargs = {"skip_prepare_dataset": True}
-    if args.lora:
-        LORA_R = 128 #128
-        LORA_ALPHA = 256 #256
-        LORA_DROPOUT= 0.05
-        LORA_TARGET_MODULES = ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj","lm_head"]
-        peft_config = LoraConfig(
-            r=LORA_R,
-            lora_alpha=LORA_ALPHA,
-            target_modules=LORA_TARGET_MODULES,
-            lora_dropout=LORA_DROPOUT,
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
-        trainer = SFTTrainer(
-            model=model,
-            args=training_args,
-            train_dataset=train_data,
-            eval_dataset=eval_data,
-            data_collator=collate_fn,
-            dataset_text_field="", # needs dummy value
-            peft_config=peft_config,
-            tokenizer=processor.tokenizer,
-        )
-        os.makedirs(out_dir, exist_ok=True)
-        out_dir_lora = os.path.join(out_dir, 'lora')
-        trainer.train()
-        trainer.save_model(out_dir_lora)
-        #merged_model = model.merge_and_unload()
-        #merged_model.save_pretrained(out_dir_model)
+    processor = AutoProcessor.from_pretrained(args.model, trust_remote_code=False)
+
+    # if processor.tokenizer.pad_token is None:
+    #     processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    if processor.tokenizer.pad_token is None:
+        processor.tokenizer.add_special_tokens({
+            "pad_token": processor.tokenizer.eos_token
+        })
+    model.config.use_cache = False
+    return model, processor
+
+
+def build_peft_config():
+    return LoraConfig(
+        r=DEFAULTS["lora_r"],
+        lora_alpha=DEFAULTS["lora_alpha"],
+        target_modules=DEFAULTS["lora_target_modules"],
+        lora_dropout=DEFAULTS["lora_dropout"],
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+def get_model_family(model_name: str):
+    if "qwen" in model_name.lower():
+        return "qwen"
+    elif "llama" in model_name.lower():
+        return "llama"
     else:
-        trainer = SFTTrainer(
-            model=model,
-            args=training_args,
-            train_dataset=train_data,
-            eval_dataset=eval_data,
-            data_collator=collate_fn,
-            dataset_text_field="", # needs dummy value
-            #peft_config=peft_config,
-            tokenizer=processor.tokenizer,
-        )
-        trainer.train()
-        trainer.save_model(out_dir_model)
-    processor.save_pretrained(out_dir_model)
-    processor.tokenizer.save_pretrained(out_dir_model)
+        return "generic"
 
-    
-    print(os.system("nvidia-smi"))
+def main():
+    set_seed(42)
+    # print(
+    #     f"[RANK DEBUG] MASTER_ADDR={os.environ.get('MASTER_ADDR')} "
+    #     f"MASTER_PORT={os.environ.get('MASTER_PORT')} "
+    #     f"RANK={os.environ.get('RANK')} "
+    #     f"LOCAL_RANK={os.environ.get('LOCAL_RANK')} "
+    #     f"WORLD_SIZE={os.environ.get('WORLD_SIZE')}",
+    #     flush=True
+    # )
+
+    print("Loading the data")
+    if is_arrow_dataset(args.train_data):
+        train_input = load_arrow_as_legacy(args.train_data, 'train')
+        eval_input = load_arrow_as_legacy(args.eval_data, 'validation')
+    else:
+        train_input = load_pickle(args.train_data)
+        eval_input = load_pickle(args.eval_data)
+
+    train_items = []
+    for t in train_input:
+        train_items.extend(generate_style_variants(t, args.styles))
+
+    eval_items = []
+    for t in eval_input:
+        eval_items.extend(generate_style_variants(t, False))
+
+    print("Formatting the data")
+    model_family = get_model_family(args.model)
+
+    train_dataset = PhenotypeDataset(train_items, model_family)
+    eval_dataset = PhenotypeDataset(eval_items, model_family)
+
+    print("Loading the model")
+    model, processor = load_model()
+    if "llama" in args.model.lower():
+        processor.tokenizer.padding_side = "right"
+    print("Setting up the training configs")
+    training_args = SFTConfig(
+        output_dir=f"./vision_{args.name}",
+        num_train_epochs=5,
+        per_device_train_batch_size=4 if "llama" in model_family.lower() else 16,
+        gradient_accumulation_steps=10 if "llama" in model_family.lower() else 8,
+        learning_rate=2e-4 if args.lora else 1e-5,
+        logging_steps=50,
+        save_steps=200,
+        eval_steps=200,
+        bf16=True,
+        fp16=False,
+        gradient_checkpointing=False,
+        warmup_steps=10,
+        weight_decay=0.01,
+        max_grad_norm=1.0,
+        lr_scheduler_type="cosine",
+        report_to="none",
+        remove_unused_columns=False,
+        dataset_text_field="",
+        dataset_kwargs={"skip_prepare_dataset": True},
+    )
+
+    peft_config = build_peft_config() if args.lora else None
+
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        data_collator=collate_fn(processor, model_family),
+        peft_config=peft_config,
+    )
+
+    print("Start to train the model")
+    try:
+        trainer.train()
+        trainer.save_model(f"./vision_{args.name}/model")
+        processor.save_pretrained(f"./vision_{args.name}/model")
+        processor.tokenizer.save_pretrained(f"./vision_{args.name}/model")
+    except Exception as e:
+        print(f"Error: {e}")
+        os.system("nvidia-smi")
+    os.system("nvidia-smi")
+    print("Done")
+
 
 if __name__ == "__main__":
     main()

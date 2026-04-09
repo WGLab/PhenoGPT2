@@ -13,6 +13,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
+from zero_to_fp32 import convert_zero_checkpoint_to_fp32_state_dict
 
 # -------------------------
 # Argument parser
@@ -26,7 +27,6 @@ def parse_args():
     parser.add_argument("--train_data", type=str, required=True, help="Path to training data pickle file")
     parser.add_argument("--val_data", type=str, required=True, help="Path to validation data pickle file")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory")
-    parser.add_argument("-attn_implementation", "--attn_implementation", required=False, default='eager', help="Default implementation 'eager' is turned on by default. Note that: FlashAttention may not be supported on arm64/aarch64 platforms. Flash Attention helps faster inference and lower memory usage.")
 
     # DeepSpeed passthrough
     parser.add_argument("--deepspeed", default=None, help="Path to DeepSpeed config json (e.g., ds_zero2_bf16.json)")
@@ -199,7 +199,20 @@ def generate_and_tokenize(data_point, tokenizer, name2hpo, cutoff_len, max_prefi
     messages = generate_prompt(data_point, name2hpo)
     return tokenize_prompt(messages, tokenizer, cutoff_len=cutoff_len, max_prefix_tokens=max_prefix_tokens)
 
+def get_latest_global_step_dir(root_dir):
+    max_step = -1
+    max_dir = None
 
+    for name in os.listdir(root_dir):
+        if name.startswith("global_step"):
+            m = re.match(r"global_step(\d+)", name)
+            if m:
+                step = int(m.group(1))
+                if step > max_step:
+                    max_step = step
+                    max_dir = name
+
+    return max_dir
 # -------------------------
 # Collator (safe for causal LM + custom labels)
 # -------------------------
@@ -266,7 +279,7 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(
         args.pretrain_model,
         torch_dtype=torch.bfloat16,
-        attn_implementation=args.attn_implementation,  # keep if your env supports it
+        attn_implementation="flash_attention_2",  # keep if your env supports it
         # trust_remote_code=True/False depending on your Qwen3 setup
     )
 
@@ -293,6 +306,7 @@ def main():
     <|start_header_id|>assistant<|end_header_id|>
     {% endif %}
     """
+    tokenizer.save_pretrained(tokenizer_out)
 
     # Load data
     with open(args.train_data, "rb") as f:
@@ -389,8 +403,13 @@ def main():
     try:
         trainer.train()
         trainer.save_model(model_out)
-        tokenizer.save_pretrained(model_out)
-
+        tag = get_latest_global_step_dir(model_out)
+        convert_zero_checkpoint_to_fp32_state_dict(model_out,
+                                               model_out,
+                                               max_shard_size='5GB',
+                                               safe_serialization=False,
+                                               tag=tag,
+                                               exclude_frozen_parameters=False)
     except Exception as e:
         print(f"Error: {e}", flush=True)
         os.system("nvidia-smi")

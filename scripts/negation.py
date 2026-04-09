@@ -1,79 +1,68 @@
-#import spacy, medspacy
-#from medspacy.context import ConText, ConTextRule
-#from medspacy.ner import TargetRule
-#from spacy.tokens import Doc
-from ast import literal_eval
-from .utils import generate_output, generate_output_batch
-from .formatting_results import *
-from rapidfuzz import process, fuzz
+from __future__ import annotations
+
+import re
 import ast
-# nlp = spacy.blank("en")
-# def set_target_rules( phenotype_list):
-#     return [TargetRule(phen, "PHENOTYPE") for phen in phenotype_list]
-# def include_ent(ent):
-#     if ent._.is_negated:
-#         return False
-#     if ent._.is_uncertain:
-#         return False
-# #         if ent._.is_historical:
-# #             return False
-#     if ent._.is_hypothetical:
-#         return False
-#     if ent._.is_family:
-#         return False
-#     return True
-# def remove_negation_by_medspacy(paragraph, phenotypes):
-#     nlp = medspacy.load()
-#     target_matcher = nlp.get_pipe("medspacy_target_matcher")
-#     texts = paragraph.split(".")
-#     texts = [t.strip() for t in texts if len(t) > 0]
-#     target_rules = set_target_rules(phenotypes)
-#     target_matcher.add(target_rules)
-#     docs = list(nlp.pipe(texts))
-#     positive_phens = []
-#     for doc in docs:
-#         for ent in doc.ents:
-#             if include_ent(ent) and str(ent) not in positive_phens:
-#                 positive_phens.append(str(ent))
-#     return(positive_phens)
-def exact_or_substring_match(p, candidates):
-    """
-    Check exact or substring match (case-insensitive).
-    """
+from typing import List, Optional
+
+import numpy as np
+from rapidfuzz import process, fuzz
+
+from .utils import generate_output, generate_output_batch, verify_hpo_mapping
+from .formatting_results import extract_json_object
+
+
+# ---------------------------------------------------------------------------
+# Matching helpers
+# ---------------------------------------------------------------------------
+
+def exact_or_substring_match(p: str, candidates: List[str]) -> Optional[str]:
+    """Case-insensitive exact match."""
     p_l = p.lower()
     for c in candidates:
-        c_l = c.lower()
-        if p_l == c_l:# or p_l in c_l or c_l in p_l:
+        if p_l == c.lower():
             return c
     return None
+
+
 def cosine_sim(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-def embedding_match(p, candidates, model, threshold=0.90):
-    """
-    Return best matching candidate if similarity >= threshold, else None
-    """
+
+
+def embedding_match(
+    p: str,
+    candidates: List[str],
+    model,
+    threshold: float = 0.90,
+) -> Optional[str]:
+    """Return the best-matching candidate if similarity >= threshold."""
     if not candidates:
         return None
-
-    p_emb = model.encode(p, normalize_embeddings=True)
+    p_emb     = model.encode(p, normalize_embeddings=True)
     cand_embs = model.encode(candidates, normalize_embeddings=True)
+    sims      = p_emb @ cand_embs.T
+    idx       = int(np.argmax(sims))
+    return candidates[idx] if sims[idx] >= threshold else None
 
-    sims = p_emb @ cand_embs.T
-    idx = int(np.argmax(sims))
-    if sims[idx] >= threshold:
-        return candidates[idx]
-    return None
-negation_check = ['no ', 'not ', 'non ', 'none ', 'negated', 'absent', 'negative', 'without', 'never', 'intact',
-                 'benign', 'unremarkable', 'free of', 'wnl']
+
+# ---------------------------------------------------------------------------
+# Negation term list and helpers
+# ---------------------------------------------------------------------------
+
+negation_check = [
+    "no ", "not ", "non ", "none ", "negated", "absent", "negative",
+    "without", "never", "intact", "benign", "unremarkable", "free of", "wnl",
+]
+
+
 def segment_bool_flags(s: str, keys=("age", "sex", "ethnicity")):
-    # Find key positions (start indices)
-    key_pos = {k: re.search(rf"'{re.escape(k)}'\s*:", s) for k in keys}
-
-    # token pattern: true/false, optionally quoted, case-insensitive
+    """
+    Robustly extract true/false values for demographic keys from a raw
+    string representation of the negation JSON response.
+    """
+    key_pos  = {k: re.search(rf"'{re.escape(k)}'\s*:", s) for k in keys}
     BOOL_TOK = re.compile(r"""(["']?)\b(true|false)\b\1""", re.IGNORECASE | re.VERBOSE)
 
     def next_boundary(curr_key):
-        """Return index of the next existing key after curr_key, else end-of-string."""
         idx = keys.index(curr_key)
         for k2 in keys[idx + 1:]:
             if key_pos[k2]:
@@ -85,183 +74,246 @@ def segment_bool_flags(s: str, keys=("age", "sex", "ethnicity")):
         if not key_pos[k]:
             out[k] = None
             continue
-
-        start = key_pos[k].end()
-        end = next_boundary(k)
-        segment = s[start:end]
-
+        segment = s[key_pos[k].end():next_boundary(k)]
         matches = list(BOOL_TOK.finditer(segment))
-        if not matches:
-            out[k] = None
-        else:
-            # pick the LAST boolean token in the segment (most "local"/closest to boundary)
-            out[k] = matches[-1].group(2).lower() == "true"
-
+        out[k]  = matches[-1].group(2).lower() == "true" if matches else None
     return out
 
-def contains_negation(text, neg_terms):
+
+def contains_negation(text: str, neg_terms: List[str]) -> bool:
+    """Return True if any negation term is found in text (lowercased)."""
     text = text.lower()
-def has_digit_or_period(text):
-    pattern = re.compile(r'\d+\.\d+')
-    return bool(pattern.search(text))
-def process_negation(output_ans, negation_response, complete, emb_model):
-    temp_dict = {'demographics': {}, 'phenotypes':{}, 'filtered_phenotypes': {}, 'negation_analysis': None, 'complete': complete}
-    demographics = output_ans['demographics']
-    phenotypes = output_ans['phenotypes']
+    return any(term in text for term in neg_terms)
+
+
+def has_digit_or_period(text: str) -> bool:
+    """Return True if text contains a decimal number pattern (e.g. lab values)."""
+    return bool(re.search(r"\d+\.\d+", text))
+
+
+# ---------------------------------------------------------------------------
+# Core negation post-processing
+# ---------------------------------------------------------------------------
+
+def process_negation(
+    output_ans: dict,
+    negation_response,
+    complete: bool,
+    emb_model,
+    hpo_verify_threshold: float = 0.6,
+) -> dict:
+    """
+    Apply negation filtering + HPO ID verification to an extracted phenotype record.
+
+    Parameters
+    ----------
+    output_ans            : dict with 'demographics' and 'phenotypes' keys
+    negation_response     : raw string or parsed dict from the negation model
+    complete              : whether the extraction was complete
+    emb_model             : SentenceTransformer model for embedding operations
+    hpo_verify_threshold  : cosine similarity threshold for HPO ID verification
+
+    Steps
+    -----
+    1. Standard negation filter (evidence + correct flag + type checks).
+    2. HPO ID verification: for each phenotype surviving step 1, check that
+       its HPO_ID is plausibly matched to the phenotype phrase. If not,
+       remove it and record the reason in negation_analysis.
+
+    Returns
+    -------
+    dict with 'demographics', 'phenotypes', 'filtered_phenotypes',
+    'negation_analysis', 'complete' keys.
+    """
+    temp_dict = {
+        "demographics":        {},
+        "phenotypes":          {},
+        "filtered_phenotypes": {},
+        "negation_analysis":   None,
+        "complete":            complete,
+    }
+    demographics = output_ans["demographics"]
+    phenotypes   = output_ans["phenotypes"]
+
     result = extract_json_object(negation_response)
     if not result:
-        temp_dict['demographics'] = output_ans['demographics']
-        temp_dict['phenotypes'] = output_ans['phenotypes']
-        temp_dict['filtered_phenotypes'] = {}
-        temp_dict['negation_analysis'] = negation_response
-        temp_dict['complete'] = False 
-    demographics_check = result['demographics']
-    phenotypes_check = result['phenotypes']
-    temp_dict['phenotypes'] = phenotypes
-    temp_dict['negation_analysis'] = result
-    # ---------- demographics ----------
-    demographics_check_fallback = segment_bool_flags(str(demographics_check))
-    try:
-        age_correct = demographics_check['age']['correct']
-    except:
-        age_correct = demographics_check_fallback['age']
-    if not age_correct:
-        if isinstance(age_correct, bool):
-            temp_dict['demographics']['age'] = 'unknown'
+        temp_dict["demographics"]        = output_ans["demographics"]
+        temp_dict["phenotypes"]          = output_ans["phenotypes"]
+        temp_dict["filtered_phenotypes"] = {}
+        temp_dict["negation_analysis"]   = negation_response
+        temp_dict["complete"]            = False
+        return temp_dict
+
+    demographics_check = result["demographics"]
+    phenotypes_check   = result["phenotypes"]
+    temp_dict["phenotypes"]        = phenotypes
+    temp_dict["negation_analysis"] = result
+
+    # ---- Demographics ----
+    fallback = segment_bool_flags(str(demographics_check))
+
+    for field in ("age", "sex", "ethnicity"):
+        try:
+            correct = demographics_check[field]["correct"]
+        except Exception:
+            correct = fallback[field]
+
+        if not correct:
+            temp_dict["demographics"][field] = (
+                "unknown" if isinstance(correct, bool) else demographics[field]
+            )
         else:
-            temp_dict['demographics']['age'] = demographics['age']
-    else:
-        temp_dict['demographics']['age'] = demographics['age']
+            temp_dict["demographics"][field] = demographics[field]
 
-    try:
-        sex_correct = demographics_check['sex']['correct']
-    except:
-        sex_correct = demographics_check_fallback['sex']
-    if not sex_correct:
-        if isinstance(sex_correct, bool):
-            temp_dict['demographics']['sex'] = 'unknown'
-        else:
-            temp_dict['demographics']['sex'] = demographics['sex']
-    else:
-        temp_dict['demographics']['sex'] = demographics['sex']
+    # ---- Step 1: Standard negation filter ----
+    all_phenotype_keys = list(phenotypes.keys())
+    pred_keys          = list(phenotypes_check.keys())
+    negation_survivors = {}   # phenotypes that pass the negation filter
 
-    try:
-        ethnicity_correct = demographics_check['ethnicity']['correct']
-    except:
-        ethnicity_correct = demographics_check_fallback['ethnicity']
-    if not ethnicity_correct:
-        if isinstance(ethnicity_correct, bool):
-            temp_dict['demographics']['ethnicity'] = 'unknown'
-        else:
-            temp_dict['demographics']['ethnicity'] = demographics['ethnicity']
-    else:
-        temp_dict['demographics']['ethnicity'] = demographics['ethnicity']
-
-    # ---------- phenotypes ----------
-    all_phenotypes = list(phenotypes.keys())
-    pred_keys = list(phenotypes_check.keys())
-    for p in all_phenotypes:
-        matched_key = None
-
-        # 1️⃣ exact / substring match
+    for p in all_phenotype_keys:
+        # 1a. Exact match
         matched_key = exact_or_substring_match(p, pred_keys)
 
-        # 2️⃣ embedding fallback (only if not matched)
+        # 1b. Embedding / fuzzy fallback
         if matched_key is None:
             if emb_model:
-                matched_key = embedding_match(
-                    p,
-                    pred_keys,
-                    model=emb_model,   # <-- your LLM / embedding model
-                    threshold=0.90
-                )
+                matched_key = embedding_match(p, pred_keys, model=emb_model, threshold=0.90)
             else:
                 matched_term, score, _ = process.extractOne(
-                    p,
-                    pred_keys,
-                    scorer=fuzz.token_sort_ratio
+                    p, pred_keys, scorer=fuzz.token_sort_ratio
                 )
                 if score >= 70:
                     matched_key = matched_term
+
         if matched_key:
             try:
-                correct_key = [
-                    x for x in phenotypes_check[matched_key].keys()
-                    if 'correct' in x
-                ][0]
+                correct_key   = [x for x in phenotypes_check[matched_key].keys() if "correct" in x][0]
                 correct_check = ast.literal_eval(phenotypes_check[matched_key][correct_key])
-            except:
-                if 'true' in str(phenotypes_check[matched_key]).lower():
-                    correct_check = True
-                else:
-                    correct_check = False
+            except Exception:
+                correct_check = "true" in str(phenotypes_check[matched_key]).lower()
+
             if isinstance(phenotypes_check[matched_key], dict):
-                evidence_text = phenotypes_check[matched_key].get('evidence', '')
-                if evidence_text:
-                    evidence_text = evidence_text.lower()
-                else:
-                    evidence_text = ''
+                evidence_text = (phenotypes_check[matched_key].get("evidence") or "").lower()
             else:
                 if correct_check:
-                    temp_dict['filtered_phenotypes'][p] = phenotypes[p]
+                    negation_survivors[p] = phenotypes[p]
                 continue
-            matched_key_lower = matched_key.lower()
 
-            # ---- negation checks ----
-            #neg_in_evidence = contains_negation(evidence_text, negation_check)
-            neg_in_key = contains_negation(matched_key_lower, negation_check)
+            neg_in_key = contains_negation(matched_key.lower(), negation_check)
+            type_str   = phenotypes_check[matched_key].get("type", None)
 
-            # ---- lab special rule ----
-            type_str = phenotypes_check[matched_key].get('type', None)
             if type_str:
-                if (has_digit_or_period(evidence_text) or has_digit_or_period(matched_key)):
-                    if type_str == 'lab' and ('*' in evidence_text):
-                        temp_dict['filtered_phenotypes'][p] = phenotypes[p]
+                if has_digit_or_period(evidence_text) or has_digit_or_period(matched_key):
+                    if type_str == "lab" and "*" in evidence_text:
+                        negation_survivors[p] = phenotypes[p]
                         continue
                 if (
                     correct_check
-                    and (not neg_in_key) and (type_str in ['patient', 'patient_indirect', 'lab', 'imaging'])
+                    and not neg_in_key
+                    and type_str in ("patient", "patient_indirect", "lab", "imaging")
                 ):
-                    temp_dict['filtered_phenotypes'][p] = phenotypes[p]
+                    negation_survivors[p] = phenotypes[p]
                     continue
-            if (
-                correct_check
-                and not neg_in_key
-            ):
-                temp_dict['filtered_phenotypes'][p] = phenotypes[p]
 
+            if correct_check and not neg_in_key:
+                negation_survivors[p] = phenotypes[p]
         else:
-            temp_dict['filtered_phenotypes'][p] = phenotypes[p]
+            negation_survivors[p] = phenotypes[p]
+
+    # ---- Step 2: HPO ID verification ----
+    # Only run when emb_model is available and phenotypes have HPO_ID field
+    hpo_removed = {}   # {phenotype: reason} for audit trail
+
+    if emb_model is not None:
+        # split into verifiable (have HPO_ID) and pass-through (no HPO_ID)
+        to_verify_keys   = []
+        to_verify_phrases = []
+        to_verify_ids    = []
+        passthrough      = {}
+
+        for p, p_data in negation_survivors.items():
+            hpo_id = p_data.get("HPO_ID") if isinstance(p_data, dict) else None
+            if hpo_id is None:
+                passthrough[p] = p_data
+            else:
+                to_verify_keys.append(p)
+                to_verify_phrases.append(p)
+                to_verify_ids.append(hpo_id)
+
+        verified_phenotypes = dict(passthrough)  # start with pass-throughs
+
+        if to_verify_keys:
+            batch_results = verify_hpo_mapping(
+                to_verify_phrases, to_verify_ids, emb_model,
+                threshold=hpo_verify_threshold,
+            )
+            for p, p_data, (is_valid, reason) in zip(
+                to_verify_keys, 
+                [negation_survivors[k] for k in to_verify_keys],
+                batch_results
+            ):
+                if is_valid:
+                    verified_phenotypes[p] = p_data
+                else:
+                    hpo_removed[p] = reason
+
+        temp_dict["filtered_phenotypes"] = verified_phenotypes
+    else:
+        # No emb_model available — skip HPO verification, keep all survivors
+        temp_dict["filtered_phenotypes"] = negation_survivors
+
+    # ---- Attach HPO verification audit to negation_analysis ----
+    if hpo_removed:
+        if isinstance(temp_dict["negation_analysis"], dict):
+            temp_dict["negation_analysis"]["hpo_verification_removed"] = hpo_removed
+        else:
+            temp_dict["negation_analysis"] = {
+                "raw":                      temp_dict["negation_analysis"],
+                "hpo_verification_removed": hpo_removed,
+            }
+
     return temp_dict
-def negation_detection(model, tokenizer, chunk, data_point, device, max_new_tokens = 16384):
-    #positive_phenotypes = remove_negation_by_medspacy(text.lower(), phenotypes)
+
+
+# ---------------------------------------------------------------------------
+# Detection functions — accept VllmClient
+# ---------------------------------------------------------------------------
+
+def negation_detection(
+    model,
+    chunk: str,
+    data_point: dict,
+    max_new_tokens: int = 16384,
+) -> str:
+    """Single-sample negation detection via VllmClient."""
     data_point = data_point.copy()
-    data_point['clinical_note'] = chunk.lower()
-    negation_response = generate_output(model, tokenizer, data_point, temperature = 0.4, negation_detect = True, max_new_tokens = max_new_tokens, device = device)
-    return negation_response
-def negation_detection_batch(model, tokenizer, chunks, data_points, device, max_new_tokens=5000):
-    """
-    Batched negation detection.
-    chunks: list[str] (the chunk text)
-    data_points: list[dict] (final_response dict per chunk)
-    Returns list[str] aligned with inputs.
-    """
-    # Build data_points_for_negation list of dicts (same logic as negation_detection)
+    data_point["clinical_note"] = chunk.lower()
+    return generate_output(
+        model,
+        data_point,
+        max_new_tokens=max_new_tokens,
+        temperature=0.4,
+        negation_detect=True,
+    )
+
+
+def negation_detection_batch(
+    model,
+    chunks: List[str],
+    data_points: List[dict],
+    max_new_tokens: int = 5000,
+) -> List[str]:
+    """Batched negation detection via VllmClient."""
     batched_inputs = []
     for chunk, dp in zip(chunks, data_points):
         dp2 = dp.copy()
         dp2["clinical_note"] = chunk.lower()
         batched_inputs.append(dp2)
 
-    # generate_output_batch expects list of "data_point" like your generate_output input
-    # but your prompt_negation(data_point) expects the dict (dp2), so pass dp2 list
-    neg_texts = generate_output_batch(
+    return generate_output_batch(
         model,
-        tokenizer,
         batched_inputs,
         temperature=0.3,
         negation_detect=True,
         max_new_tokens=max_new_tokens,
-        device=device,
     )
-    return neg_texts

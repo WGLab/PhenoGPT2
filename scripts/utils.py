@@ -1,364 +1,391 @@
-from .prompting import *
-import torch
-from tqdm import tqdm
-import json, glob, re, os, pickle
-import numpy as np
-from pathlib import Path
-#from scripts.PhenotypeMatcher import *
-from copy import deepcopy
-# Get the directory of the current script (utils.py)
-script_dir = Path(__file__).resolve().parent
+from __future__ import annotations
 
-# Go up one level to the project root and then into the data folder
-hpo_db_file = script_dir.parent / 'data' / 'hpo_added_tokens.json'
-with open(hpo_db_file, 'r') as f:
-    hpo_db = json.load(f)
+import json
+import glob
+import os
+import pickle
+import re
+from copy import deepcopy
+from pathlib import Path
+from typing import List, Optional
+
+import numpy as np
+
+from .prompting import generate_prompt, prompt_negation
+
+# ---------------------------------------------------------------------------
+# HPO database (loaded once at import time)
+# ---------------------------------------------------------------------------
+
+script_dir   = Path(__file__).resolve().parent
+hpo_db_file  = script_dir.parent / "data" / "hpo_added_tokens.json"
+with open(hpo_db_file, "r") as _f:
+    hpo_db = json.load(_f)
+
+# all_phenotypes : list of phenotype name strings (keys of hpo_db)
 all_phenotypes = list(hpo_db.keys())
-#matcher = PhenotypeMatcher(phenotype_list=all_phenotypes, model_name="cambridgeltl/SapBERT-from-PubMedBERT-fulltext")
+
+# Pre-computed HPO name → canonical name lookup (value of hpo_db is the HP: id)
+# We also build a reverse map: HPO_ID → list of canonical phenotype names
+_hpo_id_to_names: dict[str, list[str]] = {}
+for _name, _hpo_id in hpo_db.items():
+    _hpo_id_to_names.setdefault(_hpo_id, []).append(_name)
+
+
+# ---------------------------------------------------------------------------
+# Embedding-based HPO matching (shared by vision pipeline + negation checker)
+# ---------------------------------------------------------------------------
+
+# Module-level cache so phenotype embeddings are only computed once
+_phenotype_embeddings = None
+_phenotype_names      = None   # aligned list of names
+
+
+def _get_phenotype_embeddings(emb_model):
+    """
+    Lazily compute and cache embeddings for all HPO phenotype names.
+    Returns (embeddings ndarray, names list).
+    """
+    global _phenotype_embeddings, _phenotype_names
+    if _phenotype_embeddings is None:
+        _phenotype_names      = all_phenotypes
+        _phenotype_embeddings = emb_model.encode(
+            _phenotype_names,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+    return _phenotype_embeddings, _phenotype_names
+
+
+def embed_and_match_hpo(
+    phrase: str,
+    emb_model,
+    threshold: float = 0.8,
+) -> Optional[str]:
+    """
+    Find the best-matching HPO ID for a phenotype phrase using cosine similarity.
+
+    Parameters
+    ----------
+    phrase    : free-text phenotype phrase
+    emb_model : SentenceTransformer model
+    threshold : minimum cosine similarity to accept a match
+
+    Returns
+    -------
+    HPO ID string (e.g. 'HP:0000123') if similarity >= threshold, else None.
+    """
+    embs, names = _get_phenotype_embeddings(emb_model)
+    q_emb       = emb_model.encode(phrase, normalize_embeddings=True)
+    sims        = q_emb @ embs.T
+    idx         = int(np.argmax(sims))
+    if sims[idx] >= threshold:
+        return hpo_db[names[idx]]
+    return None
+
+
+def verify_hpo_mapping(
+    phenotype_phrases: list[str],
+    hpo_ids: list[str],
+    emb_model,
+    threshold: float = 0.6,
+) -> list[tuple[bool, str]]:
+    """
+    Batched version of verify_hpo_mapping.
+    Encodes all phrases in one call and all canonical names in one call.
+    """
+    # collect all canonical names and track offsets
+    all_names   = []
+    offsets     = []   # (start, end) index into all_names per phrase
+    results_pre = []   # store early exits (hpo_id not found)
+
+    for phrase, hpo_id in zip(phenotype_phrases, hpo_ids):
+        canonical_names = _hpo_id_to_names.get(hpo_id, [])
+        if not canonical_names:
+            offsets.append(None)
+            results_pre.append((False, f"HPO ID {hpo_id} not found in database."))
+        else:
+            start = len(all_names)
+            all_names.extend(canonical_names)
+            offsets.append((start, len(all_names)))
+            results_pre.append(None)
+
+    # batch encode all phrases and all canonical names in two calls
+    phrase_embs = emb_model.encode(
+        phenotype_phrases, normalize_embeddings=True, show_progress_bar=False
+    )
+    name_embs = emb_model.encode(
+        all_names, normalize_embeddings=True, show_progress_bar=False
+    ) if all_names else np.array([])
+
+    results = []
+    for i, (phrase, hpo_id) in enumerate(zip(phenotype_phrases, hpo_ids)):
+        if results_pre[i] is not None:
+            results.append(results_pre[i])
+            continue
+
+        start, end      = offsets[i]
+        canonical_names = _hpo_id_to_names[hpo_id]
+        sims            = phrase_embs[i] @ name_embs[start:end].T
+        best_idx        = int(np.argmax(sims))
+        best_sim        = float(sims[best_idx])
+        best_name       = canonical_names[best_idx]
+
+        if best_sim >= threshold:
+            results.append((True, f"Matched '{best_name}' (sim={best_sim:.2f})"))
+        else:
+            results.append((False,
+                f"The extracted HPO ID {hpo_id} is mapped to '{best_name}' "
+                f"(sim={best_sim:.2f} < {threshold}), so this is an incorrect "
+                f"mapping and has been removed."
+            ))
+
+    return results
+
+# ---------------------------------------------------------------------------
+# Input helpers
+# ---------------------------------------------------------------------------
+
 def read_one_file(input_file):
     if isinstance(input_file, list):
-        for i,dt in enumerate(input_file):
-            if 'input' in input_file[i]:
-                input_file[i]['clinical_note'] = input_file[i].pop('input')
-            if 'image' not in input_file[i]:
-                input_file[i]['image'] = ''
-            input_file[i]['pid'] = input_file[i].pop('id')
-        input_dict = {dt['pid']:dt for dt in input_file}
-        return input_dict
+        for i, dt in enumerate(input_file):
+            if "input" in input_file[i]:
+                input_file[i]["clinical_note"] = input_file[i].pop("input")
+            if "image" not in input_file[i]:
+                input_file[i]["image"] = ""
+            input_file[i]["pid"] = input_file[i].pop("id")
+        return {dt["pid"]: dt for dt in input_file}
+
     elif os.path.isfile(input_file):
         if ".pkl" in input_file:
-            with open(input_file,'rb') as f:
+            with open(input_file, "rb") as f:
                 input_dict = pickle.load(f)
-        elif ".json" in (input_file):
-            with open(input_file, 'r') as f:
+        elif ".json" in input_file:
+            with open(input_file, "r") as f:
                 input_dict = json.load(f)
         else:
-            file_name = input_file.split('/')[-1]#[:-4]
-            file_name = file_name.split('.')[0]
-            if any([x in input_file for x in ['png', 'jpg', 'jpeg']]):  ## this is image format
+            file_name = input_file.split("/")[-1].split(".")[0]
+            if any(x in input_file for x in ["png", "jpg", "jpeg"]):
                 input_text = np.nan
-                image_dir = input_file
-            else: ## this is text format
-                with open(input_file, 'r') as f:
+                image_dir  = input_file
+            else:
+                with open(input_file, "r") as f:
                     input_data = f.readlines()
-                    input_data = [d.strip() for d in input_data]
-                    input_text = "\t".join(input_data)
-                image_dir = np.nan
-            input_dict = {file_name:{'clinical_note':input_text, 'image':image_dir, 'pid': file_name}}
+                input_text = "\t".join(d.strip() for d in input_data)
+                image_dir  = np.nan
+            return {file_name: {"clinical_note": input_text,
+                                "image": image_dir,
+                                "pid": file_name}}
+
         if isinstance(input_dict, list):
-            #assert "pid" in input_dict[0], "The given data is missing 'pid' key." 
-            if 'clinical_note' in input_dict[0]:
-                pass
-            elif 'input' in input_dict[0]:
+            if "clinical_note" not in input_dict[0] and "input" in input_dict[0]:
                 for i in range(len(input_dict)):
-                    input_dict[i]['clinical_note'] = input_dict[i].pop('input')
-                assert "clinical_note" in input_dict[0], "The given data is missing 'clinical_note' key."
-            #assert "image" in input_dict[0], "The given data is missing 'image' key."
-            input_dict = {
-                (dt['pid'] if 'pid' in dt else dt['pmid']): dt
+                    input_dict[i]["clinical_note"] = input_dict[i].pop("input")
+            assert "clinical_note" in input_dict[0], \
+                "The given data is missing 'clinical_note' key."
+            return {
+                (dt["pid"] if "pid" in dt else dt["pmid"]): dt
                 for dt in input_dict
             }
 
         elif isinstance(input_dict, dict):
             if "pid" in input_dict:
                 input_dict_copy = deepcopy(input_dict)
-                pid = input_dict_copy['pid']
-                input_dict = {pid:{}}
-                for k,v in input_dict_copy.items():
+                pid = input_dict_copy["pid"]
+                input_dict = {pid: {}}
+                for k, v in input_dict_copy.items():
                     input_dict[pid][k] = v
             elif "pmid" in input_dict:
                 input_dict_copy = deepcopy(input_dict)
-                pid = input_dict_copy['pmid']
-                input_dict = {pid:{}}
-                for k,v in input_dict_copy.items():
+                pid = input_dict_copy["pmid"]
+                input_dict = {pid: {}}
+                for k, v in input_dict_copy.items():
                     input_dict[pid][k] = v
             else:
-                for k,v in input_dict.items():
-                    #assert "pid" in v, "The given data is missing 'pid' key." 
-                    assert "clinical_note" in v, "The given data is missing 'clinical_note' key."
-                    #assert "image" in v, "The given data is missing 'image' key."
+                for v in input_dict.values():
+                    assert "clinical_note" in v, \
+                        "The given data is missing 'clinical_note' key."
                     break
+            return input_dict
+
         else:
-            raise ImportError('This file is not in correct format (list or dictionary)')
-        return input_dict
+            raise ImportError("This file is not in correct format (list or dictionary)")
     else:
-        raise ImportError('This is not a file')
+        raise ImportError("This is not a file")
+
+
 def read_input(input_file):
     if isinstance(input_file, list) or os.path.isfile(input_file):
         return read_one_file(input_file)
-    else:
-        input_list = glob.glob(input_file + "/*")
     input_dict = {}
-    for f in input_list:
-        data = read_one_file(f)
-        input_dict = {**input_dict, **data}
-    return(input_dict)
-def generate_output(model, tokenizer, data_point, device, max_new_tokens = 10000, temperature = 0.5, top_p=0.8, negation_detect = False):
-    # --------------------------------------------------
-    # 1. Build raw prompt string
-    # --------------------------------------------------
+    for f in glob.glob(input_file + "/*"):
+        input_dict.update(read_one_file(f))
+    return input_dict
+
+
+# ---------------------------------------------------------------------------
+# Generation helpers — backed by VllmClient
+# ---------------------------------------------------------------------------
+
+def generate_output(
+    client,
+    data_point,
+    max_new_tokens: int = 5000,
+    temperature: float = 0.5,
+    negation_detect: bool = False,
+    task: str = "running",
+):
+    """Single-sample inference via VllmClient."""
     if negation_detect:
-        messages = prompt_negation(data_point)
+        messages       = prompt_negation(data_point)
         max_new_tokens = min(32768, max_new_tokens * 2)
     else:
         messages = generate_prompt(data_point)
-        
-    # --------------------------------------------------
-    # 2. Apply Qwen chat template (NO thinking)
-    # --------------------------------------------------
-    config = model.config
-    if config.model_type == 'llama':
-        prompt = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
-        terminators = [
-            tokenizer.eos_token_id,
-            tokenizer.convert_tokens_to_ids("<|eot_id|>")
-        ]
-    else:
-        prompt = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,   # 🚨 critical for Qwen-3
-        )
-        terminators = [tokenizer.eos_token_id]
-        if "<|eot_id|>" in tokenizer.get_vocab():
-            terminators.append(tokenizer.convert_tokens_to_ids("<|eot_id|>"))
-    blocked_strings = ["HP", "hp", "hP", "Hp"]
-    bad_words_ids = [tokenizer.encode(word, add_special_tokens=False) for word in blocked_strings]
-    bad_words_ids = [
-        ids for ids in bad_words_ids if ids and len(ids) > 0
-    ]
-    
-    # --------------------------------------------------
-    # 3. Tokenize once
-    # --------------------------------------------------
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
-    input_len = inputs.input_ids.shape[1]
 
-    # --------------------------------------------------
-    # 4. Generate
-    # --------------------------------------------------
-    outputs = model.generate(
-        **inputs,
-        max_new_tokens=max_new_tokens,
-        do_sample=temperature > 0,
+    system = messages[0]["content"]
+    user   = messages[1]["content"]
+
+    return client.chat(
+        system=system,
+        user=user,
         temperature=temperature,
-        top_p=top_p,
-        eos_token_id=terminators,
-        pad_token_id=tokenizer.eos_token_id,
-        use_cache=True,
-        bad_words_ids=bad_words_ids,
+        max_tokens=max_new_tokens,
+        task=task,
     )
 
-    # --------------------------------------------------
-    # 6. Decode ONLY newly generated tokens
-    # --------------------------------------------------
-    gen_tokens = outputs[0, input_len:]
-    text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-    return text
 def generate_output_batch(
-    model,
-    tokenizer,
-    data_points,   # list of strings (same as your generate_output input)
-    device,
-    max_new_tokens=5000,
-    temperature=0.5,
-    top_p=0.8,
-    negation_detect=False
-):
-    """
-    Batched version of generate_output(). Returns list[str] aligned with data_points.
-    It preserves:
-      - chat template logic (llama vs qwen)
-      - terminators / eos handling
-      - bad_words_ids
-      - decoding only newly generated tokens (per sample)
-    """
-    if len(data_points) == 0:
+    client,
+    data_points: List,
+    max_new_tokens: int = 5000,
+    temperature: float = 0.5,
+    negation_detect: bool = False,
+    task: str = "running",
+) -> List:
+    """Batched inference via VllmClient."""
+    if not data_points:
         return []
 
-    # --------------------------------------------------
-    # 1. Build prompt strings (one per sample)
-    # --------------------------------------------------
-    prompts = []
-
+    systems, users  = [], []
+    _max_new_tokens = max_new_tokens
     for dp in data_points:
         if negation_detect:
-            messages = prompt_negation(dp)
+            messages        = prompt_negation(dp)
+            _max_new_tokens = min(32768, max_new_tokens * 2)
         else:
             messages = generate_prompt(dp)
+        systems.append(messages[0]["content"])
+        users.append(messages[1]["content"])
 
-        config = model.config
-        if config.model_type == "llama":
-            prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-        else:
-            prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-                enable_thinking=False,  # critical for Qwen-3
-            )
-        prompts.append(prompt)
+    system = systems[0]
 
-    # --------------------------------------------------
-    # 2. Terminators + bad words (same as generate_output)
-    # --------------------------------------------------
-    config = model.config
-    if config.model_type == "llama":
-        terminators = [
-            tokenizer.eos_token_id,
-            tokenizer.convert_tokens_to_ids("<|eot_id|>")
-        ]
-    else:
-        terminators = [tokenizer.eos_token_id]
-        if "<|eot_id|>" in tokenizer.get_vocab():
-            terminators.append(tokenizer.convert_tokens_to_ids("<|eot_id|>"))
-
-    blocked_strings = ["HP", "hp", "hP", "Hp"]
-    bad_words_ids = [tokenizer.encode(word, add_special_tokens=False) for word in blocked_strings]
-    bad_words_ids = [ids for ids in bad_words_ids if ids and len(ids) > 0]
-
-    # --------------------------------------------------
-    # 3. Tokenize as a batch (padding)
-    # --------------------------------------------------
-    inputs = tokenizer(
-        prompts,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
+    return client.chat_batch(
+        system=system,
+        users=users,
+        temperature=temperature,
+        max_tokens=_max_new_tokens,
+        task=task,
     )
-    inputs = {k: v.to(device) for k, v in inputs.items()}
 
-    # True per-sample input lengths (exclude padding)
-    # attention_mask is 1 for real tokens, 0 for pad
-    input_lens = inputs["attention_mask"].sum(dim=1).tolist()
 
-    # --------------------------------------------------
-    # 4. Generate (one GPU call)
-    # --------------------------------------------------
-    with torch.no_grad():
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=temperature > 0,
-            temperature=temperature,
-            top_p=top_p,
-            eos_token_id=terminators,
-            pad_token_id=tokenizer.eos_token_id,
-            use_cache=True,
-            bad_words_ids=bad_words_ids,
-        )
+# ---------------------------------------------------------------------------
+# Merge helper
+# ---------------------------------------------------------------------------
 
-    # --------------------------------------------------
-    # 5. Decode ONLY newly generated tokens per sample
-    # --------------------------------------------------
-    texts = []
-    for i in range(outputs.shape[0]):
-        gen_tokens = outputs[i, input_lens[i]:]
-        text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
-        texts.append(text)
-
-    return texts
-
-def merge_outputs(data):
-    """
-    This function is used to combine all results for one note if users decided to split the note into multiple chunks
-    """
-    pheno_dict = {}
-    filtered_pheno_dict = {}
-    valid_evidence_demographics_dict = {}
+def merge_outputs(data: dict) -> dict:
+    """Combine all chunk results for one clinical note into a single record."""
+    pheno_dict                 = {}
+    filtered_pheno_dict        = {}
     evidence_demographics_dict = {}
-    evidence_phenotypes_dict = {}
-    demographics = {}
-    check = 0
-    has_valid_chunk = False
-    last_error = None
+    evidence_phenotypes_dict   = {}
+    demographics               = {}
+    check                      = 0
+    has_valid_chunk            = False
+    last_error                 = None
+
     for index, (tid, data_dict) in enumerate(data.items()):
-        if 'error_response' not in data_dict:
+        if "error_response" not in data_dict:
             has_valid_chunk = True
-            if index == check and (len(data_dict) > 0):
-                demographics = data_dict['demographics'] # most of demographics are in the first chunk
+
+            if index == check and len(data_dict) > 0:
+                demographics = data_dict["demographics"]
                 try:
-                    evidence_demographics_dict = data_dict['negation_analysis']['demographics']
-                except:
+                    evidence_demographics_dict = \
+                        data_dict["negation_analysis"]["demographics"]
+                except Exception:
                     pass
-            if 'age' not in data_dict['demographics']:
-                data_dict['demographics']['age'] = 'unknown'
-            if 'sex' not in data_dict['demographics']:
-                data_dict['demographics']['sex'] = 'unknown'
-            if 'race' not in data_dict['demographics']:
-                data_dict['demographics']['race'] = 'unknown'
-            if 'ethnicity' not in data_dict['demographics']:
-                data_dict['demographics']['ethnicity'] = 'unknown'
-            if len(demographics) > 0 and isinstance(data_dict['demographics']['age'], str) and str(demographics['age']).lower() == 'unknown' and len(data_dict) > 0:
-                demographics['age'] = data_dict['demographics']['age']
-                try:
-                    evidence_demographics_dict['age'] = data_dict['negation_analysis']['demographics']['age']
-                except:
-                    pass
-            if len(demographics) > 0 and isinstance(data_dict['demographics']['sex'], str) and demographics['sex'].lower() == 'unknown' and len(data_dict) > 0:
-                demographics['sex'] = data_dict['demographics']['sex']
-                try:
-                    evidence_demographics_dict['sex'] = data_dict['negation_analysis']['demographics']['sex']
-                except:
-                    pass
-            if len(demographics) > 0 and isinstance(data_dict['demographics']['ethnicity'], str) and demographics['ethnicity'].lower() == 'unknown' and len(data_dict) > 0:
-                demographics['ethnicity'] = data_dict['demographics']['ethnicity']
-                try:
-                    evidence_demographics_dict['ethnicity'] = data_dict['negation_analysis']['demographics']['ethnicity']
-                except:
-                    pass
+
+            for field in ("age", "sex", "ethnicity"):
+                if field not in data_dict["demographics"]:
+                    data_dict["demographics"][field] = "unknown"
+
+            for field in ("age", "sex", "ethnicity"):
+                if (
+                    len(demographics) > 0
+                    and isinstance(data_dict["demographics"].get(field), str)
+                    and str(demographics.get(field, "")).lower() == "unknown"
+                    and len(data_dict) > 0
+                ):
+                    demographics[field] = data_dict["demographics"][field]
+                    try:
+                        evidence_demographics_dict[field] = \
+                            data_dict["negation_analysis"]["demographics"][field]
+                    except Exception:
+                        pass
+
             try:
-                pheno_dict = {**pheno_dict, **data_dict['phenotypes']}
-            except:
+                pheno_dict.update(data_dict["phenotypes"])
+            except Exception:
                 pass
             try:
-                filtered_pheno_dict = {**filtered_pheno_dict, **data_dict['filtered_phenotypes']}
-            except:
+                filtered_pheno_dict.update(data_dict["filtered_phenotypes"])
+            except Exception:
                 pass
             try:
-                evidence_phenotypes_dict = {**evidence_phenotypes_dict, **data_dict['negation_analysis']['phenotypes']}
-            except: ## sometimes the negation analysis cannot be properly formatted/fixed. So, we simply drop them for easier processing.
+                evidence_phenotypes_dict.update(
+                    data_dict["negation_analysis"]["phenotypes"]
+                )
+            except Exception:
                 pass
-            if (len(evidence_demographics_dict) == 0) and ('negation_analysis' in data_dict) and (isinstance(data_dict['negation_analysis'], dict)) and ('demographics' in data_dict['negation_analysis']):
-                evidence_demographics_dict = data_dict['negation_analysis']['demographics']
+
+            if (
+                not evidence_demographics_dict
+                and "negation_analysis" in data_dict
+                and isinstance(data_dict["negation_analysis"], dict)
+                and "demographics" in data_dict["negation_analysis"]
+            ):
+                evidence_demographics_dict = \
+                    data_dict["negation_analysis"]["demographics"]
         else:
-            last_error = data_dict['error_response']
-            
-        if len(demographics) == 0:
-            demographics = {'age':'unknown', 'sex': 'unknown', 'ethnicity': 'unknown'}
-        
-    
-    negation_dict = {'demographics': evidence_demographics_dict, 'phenotypes': evidence_phenotypes_dict}
+            last_error = data_dict["error_response"]
 
-    # deduplicating
-    pheno_dict_copy = {} 
-    check_phens = []
-    for k,v in pheno_dict.items():
-        if (isinstance(v, dict)) and ('HPO_ID' in v) and (v['HPO_ID'] not in check_phens):
-            pheno_dict_copy[k] = v
-            check_phens.append(v['HPO_ID'])
-    filtered_pheno_dict_copy = {}
-    check_phens = []
-    for k,v in filtered_pheno_dict.items():
-        if (isinstance(v, dict)) and ('HPO_ID' in v) and (v['HPO_ID'] not in check_phens):
-            filtered_pheno_dict_copy[k] = v
-            check_phens.append(v['HPO_ID'])
-    if has_valid_chunk:    
-        return {'demographics':demographics,'phenotypes':pheno_dict_copy, 'filtered_phenotypes':filtered_pheno_dict_copy, 'negation_analysis': negation_dict}
-    else:
-        return {'demographics':demographics,'phenotypes':pheno_dict_copy, 'filtered_phenotypes':filtered_pheno_dict_copy, 'negation_analysis': negation_dict, 'error_response': last_error}
-def count_tokens(text, tokenizer):
+        if not demographics:
+            demographics = {"age": "unknown", "sex": "unknown", "ethnicity": "unknown"}
+
+    negation_dict = {
+        "demographics": evidence_demographics_dict,
+        "phenotypes":   evidence_phenotypes_dict,
+    }
+
+    def _dedup(d):
+        seen, out = [], {}
+        for k, v in d.items():
+            if isinstance(v, dict) and "HPO_ID" in v and v["HPO_ID"] not in seen:
+                out[k] = v
+                seen.append(v["HPO_ID"])
+        return out
+
+    result = {
+        "demographics":        demographics,
+        "phenotypes":          _dedup(pheno_dict),
+        "filtered_phenotypes": _dedup(filtered_pheno_dict),
+        "negation_analysis":   negation_dict,
+    }
+    if not has_valid_chunk:
+        result["error_response"] = last_error
+    return result
+
+
+def count_tokens(text: str, tokenizer) -> int:
+    """Approximate token count using a HuggingFace tokenizer."""
     return len(tokenizer.encode(text, add_special_tokens=False))
-
-# def impute_missing_hpo(term):
-#     match, score = matcher.match(term)
-#     hpo_match = hpo_db[match]
-#     return hpo_match
