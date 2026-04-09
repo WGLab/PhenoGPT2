@@ -29,7 +29,7 @@ conda env create -f environment.yml -y
 conda activate phenogpt2
 pip install vllm==0.16.0
 pip install --upgrade pip
-pip install pandas numpy matplotlib seaborn scikit-learn spacy deepspeed accelerate dataset json_repair bitsandbytes sentence-transformers scipy rapidfuzz pyarrow nltk networkx obonet orjson
+pip install pandas numpy matplotlib seaborn scikit-learn spacy joblib peft trl deepspeed accelerate dataset json_repair bitsandbytes sentence-transformers scipy rapidfuzz pyarrow nltk networkx obonet orjson
 pip install xformers==0.0.33.post2
 python -m spacy download en_core_web_sm
 pip uninstall pyzmq -y

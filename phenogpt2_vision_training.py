@@ -161,7 +161,7 @@ def load_arrow_as_legacy(path, data_type='train'):
         if not hpo:
             text = "No phenotype detected"
         else:
-            text = " | ".join([str(x).lower() for x in hpo])
+            text = " || ".join([str(x).lower() for x in hpo])
 
         converted.append({
             "image_path": tmp_path,
