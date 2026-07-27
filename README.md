@@ -197,6 +197,8 @@ Dr. Kai Wang - Professor of Pathology and Laboratory Medicine at the University 
 ## Citations 📜
 The publication is preparing! We appreciate your reading! In the meantime, you can cite our Github if used.
 
+Nguyen QM, Ahsan MU, Wang Z, Wang K. PhenoGPT2: A multimodal fine-tuned large language models for phenotype extraction and normalization from clinical text and facial images. In: Proceedings of the 16th ACM International Conference on Bioinformatics, Computational Biology, and Health Informatics (BCB '25). ACM; 2025. doi:10.1145/3765612.3767763.
+
 > @misc{nguyen2026phenogpt2,
   author       = {Quan Minh Nguyen and Kai Wang},
   title        = {PhenoGPT2},
