@@ -262,7 +262,7 @@ def load_model():
         torch_dtype=torch.bfloat16,
         quantization_config=quant,
         trust_remote_code=False,
-        attn_implementation="sdpa" if "llama" in args.model.lower() else "flash_attention_2"
+        attn_implementation="sdpa" #if "llama" in args.model.lower() else "flash_attention_2"
     )
 
     # if distributed:
@@ -345,14 +345,14 @@ def main():
         processor.tokenizer.padding_side = "right"
     print("Setting up the training configs")
     training_args = SFTConfig(
-        output_dir=f"./vision_{args.name}",
-        num_train_epochs=5,
+        output_dir=f"./models/vision_{args.name}",
+        num_train_epochs=10,
         per_device_train_batch_size=4 if "llama" in model_family.lower() else 16,
         gradient_accumulation_steps=10 if "llama" in model_family.lower() else 8,
         learning_rate=2e-4 if args.lora else 1e-5,
         logging_steps=50,
-        save_steps=200,
-        eval_steps=200,
+        save_steps=500,
+        eval_steps=100,
         bf16=True,
         fp16=False,
         gradient_checkpointing=False,
@@ -363,6 +363,7 @@ def main():
         report_to="none",
         remove_unused_columns=False,
         dataset_text_field="",
+        save_total_limit=2,
         dataset_kwargs={"skip_prepare_dataset": True},
     )
 
@@ -380,9 +381,9 @@ def main():
     print("Start to train the model")
     try:
         trainer.train()
-        trainer.save_model(f"./vision_{args.name}/model")
-        processor.save_pretrained(f"./vision_{args.name}/model")
-        processor.tokenizer.save_pretrained(f"./vision_{args.name}/model")
+        trainer.save_model(f"./models/vision_{args.name}/model")
+        processor.save_pretrained(f"./models/vision_{args.name}/model")
+        processor.tokenizer.save_pretrained(f"./models/vision_{args.name}/model")
     except Exception as e:
         print(f"Error: {e}")
         os.system("nvidia-smi")

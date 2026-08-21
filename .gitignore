@@ -6,6 +6,8 @@ negation_filtering.py
 run_inference2.sh
 run_filtering.sh
 run_evaluations.sh
+PhenoGPT2_Codebook_local.ipynb
+evaluations-8b-ehr-clean.ipynb
 # 2. Keep subfolders in ./models/ but ignore their contents
 /models/*
 

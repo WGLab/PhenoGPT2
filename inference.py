@@ -17,7 +17,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from scripts.helpers import *
-
+from scripts.utils import map_vision_to_hpo
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------

@@ -111,51 +111,6 @@ def infer_modes(args, data_input):
                 break
     return use_text, use_vision
  
- 
-def map_vision_to_hpo(vision_phenotypes_list: list, emb_model, threshold: float = 0.8) -> list:
-    """
-    Map extracted vision phenotype strings to HPO IDs using embedding similarity.
-    Handles both '|' and '||' separators from the vision model output.
-    Deduplicates phrases before mapping to avoid redundant embedding calls.
-    Exact matches against hpo_db are resolved without running the embedding model.
-    """
-    results = []
-    for raw in vision_phenotypes_list:
-        if not raw or raw.strip().lower() == "no clearly observable phenotype":
-            results.append({})
-            continue
-
-        # handle both '||' and '|' separators
-        sep = "||" if "||" in raw else "|"
-        phrases = list(dict.fromkeys(  # deduplicate while preserving order
-            p.strip().lower() for p in raw.split(sep) if p.strip()
-        ))
-
-        mapped = {}
-        to_embed = []
-
-        # exact match first — no embedding needed
-        for phrase in phrases:
-            if phrase in hpo_db:
-                mapped[phrase] = hpo_db[phrase]
-            else:
-                to_embed.append(phrase)
-
-        # embedding match only for unresolved phrases
-        if to_embed and emb_model is not None:
-            embs, names = _get_phenotype_embeddings(emb_model)
-            phrase_embs = emb_model.encode(
-                to_embed, normalize_embeddings=True, show_progress_bar=False
-            )
-            sims = phrase_embs @ embs.T  # (n_phrases, n_hpo_names)
-            for phrase, sim_row in zip(to_embed, sims):
-                best_idx = int(np.argmax(sim_row))
-                if sim_row[best_idx] >= threshold:
-                    mapped[phrase] = hpo_db[names[best_idx]]
-
-        results.append(mapped)
-    return results
- 
 def process_one_batch_text(
     batch, data_input, client, bert_tokenizer, bert_model,
     negation, negation_client, emb_model, wc, chunk_batch_size=4

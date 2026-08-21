@@ -46,19 +46,3 @@ python ${CMD}
 #                  -name qwen3_8b_vl_phenotype_only -model Qwen/Qwen3-VL-8B-Instruct \
 #                  -styles"
 
-# sbatch -p gpu-xe9680q --gres=gpu:h100:6 --cpus-per-gpu=2 --mem-per-cpu=50G \
-#        --time=5-00:00:00 --profile=all --export=ALL --mail-type=ALL --mail-user=nguyenqm@chop.edu \
-#        --wrap="bash finetuning_phenogpt2_vision.sh \
-#                  -train_data /home/nguyenqm/projects/github/PhenoGPT2/vision_gmdb_data_new/phenotype_only \
-#                  -eval_data /home/nguyenqm/projects/github/PhenoGPT2/vision_gmdb_data_new/phenotype_only \
-#                  -name vision_llama32_11b_vl_phenotype_only -model meta-llama/Llama-3.2-11B-Vision-Instruct \
-#                  -styles"
-
-# sbatch -p gpu-xe9680q --gres=gpu:h100:4 --cpus-per-gpu=2 --mem-per-cpu=50G \
-#        --time=5-00:00:00 --profile=all --export=ALL --mail-type=ALL --mail-user=nguyenqm@chop.edu \
-#        --wrap="bash finetuning_phenogpt2_vision.sh \
-#                  -train_data /home/nguyenqm/projects/github/PhenoGPT2/vision_gmdb_data_new/phenotype_mixed \
-#                  -eval_data /home/nguyenqm/projects/github/PhenoGPT2/vision_gmdb_data_new/phenotype_mixed \
-#                  -name qwen3_8b_vl_phenotype_mixed -model Qwen/Qwen3-VL-8B-Instruct \
-#                  -styles"
-

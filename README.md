@@ -6,6 +6,8 @@ The framework performs HPO normalization and evidence-aware phenotype validation
 
 PhenoGPT2 is distributed under the [MIT License by Wang Genomics Lab](https://wglab.mit-license.org/).
 
+**UPDATED:** We use vllm in this project so it requires at least 1 GPU (at least 40GB) to run but it can handle multiple notes at a time, which improves the inference time significantly!
+
 ## Contents ✨
 
 - [Installation](#installation)
@@ -59,14 +61,11 @@ pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.
 
 Model Descriptions | Module | Base Model | 🤗 Huggingface Hub | 
 | --- | --- | --- | ---: |
-| HPO Aware Pretrain | Text | Llama 3.1 8B| [Not release yet]() |
 | HPO Aware Pretrain | Text | Qwen3 8B| [Not release yet]() |
-| PhenoGPT2-Short | Text | Llama 3.1 8B | [Not release yet]() |
-| PhenoGPT2-Short | Text | Qwen3 8B | [Not release yet]() |
-| PhenoGPT2-EHR (main) | Text | Llama 3.1 8B | [Not release yet]() |
-| PhenoGPT2-EHR (main) | Text | Qwen3 8B | [Not release yet]() |
+| PhenoGPT2-Short | Text | Qwen3 8B | [quannguyenminh103/PhenoGPT2-Short](https://huggingface.co/quannguyenminh103/PhenoGPT2-Short) |
+| PhenoGPT2-EHR | Text | Llama 3.1 8B | [quannguyenminh103/PhenoGPT2-Llama](https://huggingface.co/quannguyenminh103/PhenoGPT2-Llama) |
+| PhenoGPT2-EHR (main) | Text | Qwen3 8B | [quannguyenminh103/PhenoGPT2](https://huggingface.co/quannguyenminh103/PhenoGPT2) |
 | PhenoGPT2-Vision | Vision | LLaVA-Med/Llama | [Not release yet]() |
-| PhenoGPT2-Vision (default) | Vision | Qwen3-VL-30B-A3B-Instruct | [Not release yet]() |
 | PhenoGPT2-Vision | Vision | Llama 3.2 11B Vision-Instruct | [Not release yet]() |
 - If you plan to fine-tune or pretrain the models from scratch, make sure to download the original base model weights from [Meta](https://www.llama.com/llama-downloads/) and [LLava-Med](https://github.com/microsoft/LLaVA-Med) repos.
 - Save all models in the ./models
@@ -197,12 +196,19 @@ Dr. Kai Wang - Professor of Pathology and Laboratory Medicine at the University 
 ## Citations 📜
 The publication is preparing! We appreciate your reading! In the meantime, you can cite our Github if used.
 
-Nguyen QM, Ahsan MU, Wang Z, Wang K. PhenoGPT2: A multimodal fine-tuned large language models for phenotype extraction and normalization from clinical text and facial images. In: Proceedings of the 16th ACM International Conference on Bioinformatics, Computational Biology, and Health Informatics (BCB '25). ACM; 2025. doi:10.1145/3765612.3767763.
+**Nguyen QM, Ahsan MU, Wang Z, Wang K.**  
+PhenoGPT2: A Multimodal Fine-tuned Large Language Models for Phenotype Extraction and Normalization from Clinical Text and Facial Images.  
+*Proceedings of the 16th ACM International Conference on Bioinformatics, Computational Biology, and Health Informatics (BCB '25).* ACM; 2025.  
+https://doi.org/10.1145/3765612.3767763
 
-> @misc{nguyen2026phenogpt2,
-  author       = {Quan Minh Nguyen and Kai Wang},
-  title        = {PhenoGPT2},
-  year         = {2026},
-  howpublished = {\url{https://github.com/WGLab/PhenoGPT2}},
-  note         = {Accessed: 2026-02-11}
+### BibTeX
+
+```bibtex
+@inproceedings{nguyen2025phenogpt2,
+  author    = {Nguyen, Quan Minh and Ahsan, Mian Umair and Wang, Zhanliang and Wang, Kai},
+  title     = {PhenoGPT2: A Multimodal Fine-tuned Large Language Models for Phenotype Extraction and Normalization from Clinical Text and Facial Images},
+  booktitle = {Proceedings of the 16th ACM International Conference on Bioinformatics, Computational Biology, and Health Informatics},
+  year      = {2025},
+  publisher = {Association for Computing Machinery},
+  doi       = {10.1145/3765612.3767763}
 }
